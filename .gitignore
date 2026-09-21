@@ -1,0 +1,3 @@
+*.o
+stage0_smoketest/hello
+build/
