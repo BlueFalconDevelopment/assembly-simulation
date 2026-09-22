@@ -1,8 +1,7 @@
 # Stage 6b — Add obstacles
 
 Rectangular cover on the field, movement that routes around it
-without real pathfinding, and (in `02`, next) line-of-sight for
-ranged weapons.
+without real pathfinding, and line-of-sight for ranged weapons.
 
 ## Build
 
@@ -30,15 +29,27 @@ middle, roughly bisecting the field. Two new functions:
 The movement rule: before stepping toward a goal, `do_move` checks
 whether the straight line to it is blocked. If clear, take the
 existing clamped step. If blocked, try stepping perpendicular to the
-goal direction — one side, then the other — and take whichever is
+goal direction — one side, then the other, whichever this soldier's
+own `.avoid_dir` prefers (see bug #5 below) — and take whichever is
 clear. No A*, just "try to slide around it."
 
-## Three real bugs, found only by testing hard
+## `02_line_of_sight.asm`
 
-This file went through more debugging than any other in the project
-so far. All three are worth reading even if you never hit them
-yourself — each is a different *class* of bug that "looks fine" in a
-single test run.
+One addition on top of `01`: before a ranged attack roll,
+`.handle_enemy_goal` now calls `line_blocked` a second time (same
+function, different question) between shooter and target. Blocked
+means no shot — fall through to `.do_move` exactly as if the target
+weren't in range yet, which already knows how to route around the
+same obstacle. Knives skip the check entirely: they're contact-range
+only, and anything that would block sight at that distance would
+already have blocked the movement that got the soldier there.
+
+## Five real bugs, found only by testing hard
+
+This pair of files went through more debugging than anything else in
+the project so far. All five are worth reading even if you never hit
+them yourself — each is a different *class* of bug that "looks fine"
+in a single test run, or even in `01` alone.
 
 **1. A crash from an unclamped side-step.** The perpendicular
 side-step applies a raw `add`/`sub` to `Soldier.x`/`y` with no bound
@@ -65,11 +76,11 @@ tracking the win distribution, exactly the discipline that caught the
 original bug in stage6a — a single test run (or even a 4-run batch)
 wasn't enough to notice a mere 60-70% skew, only a much larger sample
 made it unmistakable. Fixed in both `stage6a/04_weapons.asm` and this
-file.
+stage.
 
 **3. A symmetry mismatch in the pickup layout, amplified by the
-wall.** Even with `pass_reverse` fixed, `stage6b/01_obstacles.asm`
-was winning 24 of 24 test games for team 0. The cause: soldiers spawn
+wall.** Even with `pass_reverse` fixed, `01_obstacles.asm` was
+winning 24 of 24 test games for team 0. The cause: soldiers spawn
 with LEFT-RIGHT MIRROR symmetry (both teams use the identical row
 y-values), but the four weapon pickups were placed with 180-DEGREE
 ROTATIONAL symmetry instead — pickup 0 (300,200,pistol) and pickup 3
@@ -78,15 +89,15 @@ ones. The result: team 0's top rows picked up pistols while team 1's
 *matching* top rows (same y, same distance, the soldiers who actually
 fight each other) picked up shotguns — a genuinely asymmetric
 matchup, not a coincidence. Combined with the wall's north/south
-"try up first" tie-break (which delays top-row soldiers near the wall
+processing delay (which slows down top-row soldiers near the wall
 regardless of team), whichever side's delayed, exposed rows held the
 longer-ranged pistol could snipe the other side's shotgun-wielders,
 who couldn't shoot back from that distance. **Fix:** reassign pickup
 types so weapon TYPE mirrors left-right too (both top pickups
 pistols, both bottom pickups shotguns) — matching the spawn layout's
 actual symmetry instead of a different, incompatible one. Verified
-afterward at 10/11 (this file) and 12/12 (stage6a/04, on a fresh
-larger batch) — both consistent with an actually fair fight.
+afterward at 10/11 (`01`) and 12/12 (`stage6a/04`, on a fresh larger
+batch) — both consistent with an actually fair fight.
 
 **4. A collision check that only tested a point, not a body.**
 Visually, soldiers could walk partway *into* wall segments before
@@ -100,12 +111,38 @@ proper box-vs-box (AABB) overlap test, verified against the exact
 boundary (`x=350` clear, `x=355` blocked, for an obstacle starting at
 `x=370` and a 16px soldier).
 
+**5. A permanent 2-tick oscillation, exposed by adding line-of-sight.**
+`01` alone always resolved fights within 10-20 seconds. Add `02`'s LOS
+check and fights started taking 90+ seconds — some never finished.
+Per-tick position tracing on a stuck soldier showed the cause exactly:
+`y=0 → y=2 → y=0 → y=2 → ...`, forever, in perfect lockstep with the
+branch trace flipping `up → down → up → down`. The side-step always
+tried "up" first, unconditionally. At `y=0` (screen edge), "up" is
+blocked, so it falls back to "down" and moves to `y=2`. At `y=2`, "up"
+is no longer blocked (`y=0` is back on-screen) — so it takes "up"
+again, immediately undoing the previous step. Forever. `01` mostly
+dodged this because a soldier could often resolve combat (through the
+wall) before ever getting trapped at exactly that boundary; `02`
+forces every ranged soldier to actually complete the physical detour,
+making the trap far more likely to be hit and impossible to escape
+once caught. **Fix:** a new `Soldier.avoid_dir` field makes the
+preference *sticky* — a soldier remembers which side worked last and
+tries that one first, only switching if it stops working. Verified by
+re-running the exact same per-tick trace after the fix (clean
+monotonic movement, no oscillation) and confirming fight resolution
+times dropped back to 9-14 seconds across repeated runs, with zero
+crashes. The same bug — and the same fix — applied to `01`, since the
+flawed logic originated there.
+
 **The throughline:** every one of these was invisible in a single
-run, or even a small batch. Running the same simulation repeatedly
-and looking at the *distribution* of outcomes — not any one outcome —
-is what caught #2 and #3. Watching closely and comparing what you see
-against what the code claims to do is what caught #1 and #4. Neither
-substitutes for the other.
+run, or even a small batch, or in `01` considered alone. Running the
+same simulation repeatedly and looking at the *distribution* of
+outcomes caught #2 and #3. Watching closely and comparing what you
+see against what the code claims to do caught #1 and #4. Tracing
+exact state tick-by-tick, not just sampling every so often, caught
+#5 — a coarser sample (once a second) made a perfect 2-tick
+oscillation look like a plain freeze, not a cycle. None of these
+techniques substitutes for the others.
 
 ## Running under gdb
 
@@ -125,11 +162,17 @@ gdb ./build/01_obstacles
 (gdb) print *(int*)&obstacles          # obstacle[0].x
 ```
 
+For anything resolving over multiple seconds of simulated time (a
+fight, a stuck soldier), breaking every frame under gdb is too slow to
+page through interactively (60 breakpoint stops a second). Redirect
+stdout to a file from a temporary debug print instead, and read the
+file — the technique that actually found bug #5.
+
 ## What's deliberately not here yet
 
-- Ranged weapons can still fire straight through the wall — no
-  line-of-sight check on attacks yet. That's `02`.
 - The perpendicular side-step is a heuristic, not pathfinding — a
   fully enclosed pocket (no gap at all) leaves a soldier sliding along
-  a wall forever. `01`'s closing exercises ask you to construct and
-  observe this on purpose.
+  a wall forever, even with the sticky-direction fix (it just means
+  every soldier commits to a direction instead of flip-flopping;
+  a wall with no gap still has no direction that works). `01`'s
+  closing exercises ask you to construct and observe this on purpose.

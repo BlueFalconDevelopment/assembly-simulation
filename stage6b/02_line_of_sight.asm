@@ -1,26 +1,21 @@
 ; ============================================================
-; 01 — Obstacles, and movement that routes around them
+; 02 — Line of sight for ranged weapons
 ;
-; A fixed set of rectangular `Obstacle` blocks now sit on the field
-; (same "struct array + struc" pattern as Soldier/Pickup). Soldiers
-; must not walk through them.
+; 01 stopped soldiers from walking through obstacles, but pistols and
+; shotguns could still fire straight through a wall as long as the
+; target was within range -- `.handle_enemy_goal` only ever checked
+; distance, never whether anything was actually in the way.
 ;
-; The movement rule, straight from the roadmap: before stepping
-; toward a goal, check whether the STRAIGHT LINE from here to the
-; goal is blocked by an obstacle. If it's clear, move directly (the
-; existing clamped-step code, unchanged). If it's blocked, don't try
-; to path around intelligently (no A*) -- just step sideways,
-; perpendicular to the goal direction, trying one side and then the
-; other, and take whichever is clear. Repeated over several ticks,
-; this is enough to walk around a rectangular block without ever
-; computing a real path.
-;
-; `line_blocked` is exactly stage3's `draw_line` Bresenham walk, with
-; `set_pixel` swapped for a per-step `is_box_blocked` check and
-; an early return the moment any step lands inside a block. This is
-; the reuse the roadmap called out three stages ago: the same
-; line-stepping idea, now answering "is anything in the way" instead
-; of "color this pixel."
+; The fix reuses `line_blocked` (already built in 01 for movement
+; avoidance) a second time: before a ranged attack roll, check
+; whether the line from shooter to target is blocked. If it is,
+; treat this tick exactly like "not in range yet" -- fall through to
+; `.do_move`, which already knows how to route around the very same
+; obstacle. One function, two completely different callers (movement
+; and combat), asking the identical question. Knives skip the check
+; entirely: they're contact-range only, and anything that would block
+; line of sight at that distance would already have blocked the
+; movement that got the soldier there in the first place.
 ; ============================================================
 default rel
 global main
@@ -145,7 +140,7 @@ LOOP_I_OFF      equ 80
 STACK_LOCALS_SIZE equ 96
 
 section .data
-    title db "Stage 6b.01 - obstacles block movement", 0
+    title db "Stage 6b.02 - line of sight blocks ranged fire", 0
     win_msg0 db "Team 0 (blue) wins!", 10
     win_msg0_len equ $ - win_msg0
     win_msg1 db "Team 1 (red) wins!", 10
@@ -1124,6 +1119,23 @@ update_soldiers:
     cmp dword [rbp + US_DIST_SQ], eax
     jg .do_move
 
+    ; ranged weapons need line of sight to actually fire; knife is
+    ; contact-range only, and an obstacle blocking contact would
+    ; already have blocked the movement that got here, so skip the
+    ; check for it entirely
+    mov eax, [rbp + US_WEAPON]
+    cmp eax, WEAPON_KNIFE
+    je .los_ok
+
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    mov edx, [rbp + US_GOAL_X]
+    mov ecx, [rbp + US_GOAL_Y]
+    call line_blocked
+    test eax, eax
+    jnz .do_move                   ; blocked -- can't fire, try to reposition instead
+.los_ok:
+
     mov eax, [rbp + US_ACTUAL]
     imul eax, Soldier_size
     lea r10, [soldiers]
@@ -1498,40 +1510,37 @@ fill_rect:
 ; ------------------------------------------------------------
 ; Build and run:
 ;   make
-;   ./build/01_obstacles
-; A grayish-brown wall (two segments, a gap in the middle) now splits
-; the field roughly down the center. Soldiers whose straight path to
-; their goal is blocked by a segment should visibly sidestep toward
-; the gap instead of walking through it.
+;   ./build/02_line_of_sight
+; Same wall as 01. Now a pistol/shotgun-armed soldier standing within
+; range but with the wall between it and its target should NOT fire
+; -- watch for soldiers pausing/repositioning near the wall instead
+; of trading shots straight through it, which is what 01 would have
+; let them do.
 ;
 ; Try this in gdb:
-;   (gdb) print (int)is_box_blocked(400, 100)   # won't work --
-;     gdb can't call our functions like C ones without more setup.
-;     Instead, break inside it and inspect:
-;   (gdb) break is_box_blocked
+;   (gdb) break update_soldiers.los_ok
 ;   (gdb) run
-;   (gdb) print $edi
-;   (gdb) print $esi
-;   (gdb) finish                # shows the return value once debug
-;                                   info allows it, or check $eax after
+;   ... this only fires once a ranged-armed soldier both has a living
+;   enemy in range AND a clear line to it -- if it takes a while to
+;   hit, that's the pickup/approach phase still playing out, not a bug
 ;
 ; Questions to answer by experimenting:
-;   - Temporarily close the gap -- change the second segment's height
-;     in spawn_obstacles so the two segments together span the whole
-;     field, y=0 to y=600, with no opening. Rebuild and watch what
-;     happens to soldiers trying to cross it -- does the perpendicular
-;     side-step ever get them through, or do they just slide along the
-;     wall forever? What does this tell you about the real difference
-;     between this technique and actual pathfinding?
-;   - `line_blocked` walks EVERY point between two soldiers that might
-;     be 600+ pixels apart, calling `is_box_blocked` (itself a
-;     loop over NUM_OBSTACLES) at every single step. Work out roughly
-;     how many total checks one `do_move` call can trigger in the
-;     worst case, and compare that to stage6a's README note about
-;     50v50 performance headroom -- does this change the answer?
-;   - The vertical-vs-horizontal choice in the "blocked" branch is
-;     based on which of |dx|/|dy| is bigger. Construct a scenario
-;     (goal position relative to self) where this heuristic picks the
-;     WRONG axis to slide along -- i.e., sliding the chosen way still
-;     can't clear the obstacle, but the other axis would have.
+;   - Comment out just the `je .los_ok` / LOS-check block (make ranged
+;     weapons skip the check again, like 01). Rebuild, watch a fight.
+;     Can you visually tell the difference from across the room, or do
+;     you need to specifically watch soldiers near the wall to notice?
+;   - A pistol-armed soldier has a clear shot, fires, and its target
+;     drops below the wall's y-range mid-cooldown (say, retreating
+;     through the gap). Trace through `.handle_enemy_goal` by hand for
+;     the NEXT tick this soldier gets to act -- does it correctly
+;     re-evaluate LOS, or could stale state make it fire blind?
+;   - When a ranged attack's LOS check fails, execution falls through
+;     to `.do_move`, which immediately calls `line_blocked` AGAIN with
+;     the exact same self/goal coordinates that were just found
+;     blocked. Confirm this by comparing the args at both call sites
+;     -- is this specific path doing the identical walk twice? Given
+;     the performance headroom stage6a's README worked out, is it
+;     worth fixing, and what would the fix look like (hint: what does
+;     `.handle_enemy_goal` already have in a register or local that
+;     `.do_move` could just reuse instead of recomputing)?
 ; ------------------------------------------------------------
