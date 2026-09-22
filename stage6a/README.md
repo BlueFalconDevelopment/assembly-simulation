@@ -80,6 +80,32 @@ bias somewhere else isn't actually a fix.** Single test runs cannot
 catch this class of bug; only running the same simulation repeatedly
 and looking at the distribution of outcomes can.
 
+## Addendum: two more bugs, found while building Stage 6b
+
+Both were caught (again, by repeated-run testing, not a single
+playthrough) while working on `stage6b`, and both required fixing
+`04_weapons.asm` after the fact:
+
+- **The `pass_reverse` fix above went missing.** When this file was
+  rewritten from `03_combat.asm`, the `call rand` / `and eax, 1` /
+  `mov [pass_reverse], eax` line that actually *randomizes* the
+  per-tick direction never made it in — `pass_reverse` was still
+  declared and still read, just never written, so it stayed
+  permanently 0 and team 0's original first-strike advantage came
+  right back. Already committed and pushed before this was caught.
+- **Pickup weapon types didn't match the spawn symmetry.** Soldiers
+  spawn with left-right MIRROR symmetry (both teams use identical row
+  y-values), but the four pickups were placed with 180-degree
+  ROTATIONAL symmetry instead, so team 0's top rows and team 1's
+  matching top rows — who actually fight each other — ended up with
+  *different* weapons (one side pistols, the other shotguns). Fixed
+  by making weapon TYPE mirror left-right too. See `stage6b`'s README
+  for the full story, including how the obstacle wall amplified this
+  one into a 24-of-24 result before the fix.
+
+Both are fixed here now; a fresh 24-run batch after both fixes came
+back 12-of-24, consistent with an actually fair fight.
+
 ## What's new here vs. Stages 0-5
 
 - **An array of structs as the core data model**, not a handful of

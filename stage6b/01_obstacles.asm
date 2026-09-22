@@ -1,23 +1,26 @@
 ; ============================================================
-; 04 — Weapon pickups: seek, grab, fight better, drop on death
+; 01 — Obstacles, and movement that routes around them
 ;
-; Everyone still starts with a knife. Pistols and shotguns exist only
-; as pickups on the field (a `Pickup` struct array, same pattern as
-; `Soldier`). A knife-only soldier compares the squared distance to
-; its nearest active pickup against the squared distance to its
-; nearest living enemy, and goes for whichever is closer -- exactly
-; the roadmap's rule, using the exact same squared-distance-no-sqrt
-; technique as find_nearest_enemy, just against a different array.
+; A fixed set of rectangular `Obstacle` blocks now sit on the field
+; (same "struct array + struc" pattern as Soldier/Pickup). Soldiers
+; must not walk through them.
 ;
-; Once armed, combat stats depend on the weapon: pistol trades
-; knife's guaranteed-close damage for range; shotgun has actual
-; falloff -- better odds and damage up close, worse at the edge of
-; its range, entirely determined at the moment of firing by the
-; REAL distance that tick, not by which "range" got it into combat.
+; The movement rule, straight from the roadmap: before stepping
+; toward a goal, check whether the STRAIGHT LINE from here to the
+; goal is blocked by an obstacle. If it's clear, move directly (the
+; existing clamped-step code, unchanged). If it's blocked, don't try
+; to path around intelligently (no A*) -- just step sideways,
+; perpendicular to the goal direction, trying one side and then the
+; other, and take whichever is clear. Repeated over several ticks,
+; this is enough to walk around a rectangular block without ever
+; computing a real path.
 ;
-; When an armed soldier dies, its weapon drops back onto the field at
-; its death position (recycling any free Pickup slot) and stays in
-; circulation -- someone else can walk over and take it.
+; `line_blocked` is exactly stage3's `draw_line` Bresenham walk, with
+; `set_pixel` swapped for a per-step `is_box_blocked` check and
+; an early return the moment any step lands inside a block. This is
+; the reuse the roadmap called out three stages ago: the same
+; line-stepping idea, now answering "is anything in the way" instead
+; of "color this pixel."
 ; ============================================================
 default rel
 global main
@@ -69,8 +72,8 @@ PISTOL_DAMAGE         equ 20
 PISTOL_HIT_CHANCE     equ 60
 PISTOL_COOLDOWN_TICKS equ 20
 
-SHOTGUN_RANGE         equ 180   ; outer engagement range
-SHOTGUN_CLOSE_RANGE   equ 80    ; falloff threshold
+SHOTGUN_RANGE         equ 180
+SHOTGUN_CLOSE_RANGE   equ 80
 SHOTGUN_CLOSE_DAMAGE  equ 50
 SHOTGUN_CLOSE_HIT     equ 85
 SHOTGUN_FAR_DAMAGE    equ 25
@@ -86,6 +89,8 @@ STATE_SEEK_ENEMY equ 1
 MAX_PICKUPS   equ 8
 PICKUP_SIZE   equ 10
 PICKUP_RADIUS equ 15
+
+NUM_OBSTACLES equ 2
 
 struc FrameBuffer
     .pixels: resq 1
@@ -112,11 +117,19 @@ struc Pickup
     .active: resd 1
 endstruc
 
+struc Obstacle
+    .x: resd 1
+    .y: resd 1
+    .w: resd 1
+    .h: resd 1
+endstruc
+
 COLOR_FIELD  equ 0xFF50966E
 COLOR_TEAM0  equ 0xFFDC783C
 COLOR_TEAM1  equ 0xFF3C3CDC
 COLOR_PICKUP_PISTOL  equ 0xFF28D2E6
 COLOR_PICKUP_SHOTGUN equ 0xFFC83CAA
+COLOR_OBSTACLE equ 0xFF505A64   ; R=100 G=90 B=80 A=255 -- grayish-brown cover
 
 LOCK_PIXELS_OFF equ 0
 LOCK_PITCH_OFF  equ 8
@@ -125,7 +138,7 @@ LOOP_I_OFF      equ 80
 STACK_LOCALS_SIZE equ 96
 
 section .data
-    title db "Stage 6a.04 - weapons in play", 0
+    title db "Stage 6b.01 - obstacles block movement", 0
     win_msg0 db "Team 0 (blue) wins!", 10
     win_msg0_len equ $ - win_msg0
     win_msg1 db "Team 1 (red) wins!", 10
@@ -145,6 +158,7 @@ section .bss
     back_buffer resb SCREEN_W * SCREEN_H * 4
     soldiers    resb TOTAL_SOLDIERS * Soldier_size
     pickups     resb MAX_PICKUPS * Pickup_size
+    obstacles   resb NUM_OBSTACLES * Obstacle_size
 
 section .text
 main:
@@ -160,6 +174,7 @@ main:
 
     call spawn_soldiers
     call spawn_pickups
+    call spawn_obstacles
 
     xor edi, edi
     call time
@@ -247,6 +262,31 @@ main:
     mov r8d, SCREEN_H
     mov r9d, COLOR_FIELD
     call fill_rect
+
+    ; ---- obstacles ----
+    mov dword [rsp + LOOP_I_OFF], 0
+.obstacle_draw_loop:
+    mov eax, [rsp + LOOP_I_OFF]
+    cmp eax, NUM_OBSTACLES
+    jge .obstacle_draw_done
+
+    imul eax, Obstacle_size
+    lea r10, [obstacles]
+    add r10, rax
+
+    lea rdi, [back_fb]
+    mov esi, [r10 + Obstacle.x]
+    mov edx, [r10 + Obstacle.y]
+    mov ecx, [r10 + Obstacle.w]
+    mov r8d, [r10 + Obstacle.h]
+    mov r9d, COLOR_OBSTACLE
+    call fill_rect
+
+    mov eax, [rsp + LOOP_I_OFF]
+    inc eax
+    mov [rsp + LOOP_I_OFF], eax
+    jmp .obstacle_draw_loop
+.obstacle_draw_done:
 
     ; ---- active weapon pickups ----
     mov dword [rsp + LOOP_I_OFF], 0
@@ -444,21 +484,12 @@ spawn_soldiers:
 
 
 ; void spawn_pickups(void)
-; Four fixed pickups near the field's center; the remaining
-; MAX_PICKUPS-4 slots stay inactive (already zeroed by .bss) until a
-; soldier dies holding a weapon and drop_weapon claims one.
-;
-; IMPORTANT: weapon TYPE is mirrored left-right (both top pickups are
-; pistols, both bottom pickups are shotguns), matching how the teams
-; spawn -- team 0 and team 1 use the IDENTICAL row y-values (a
-; left-right mirror), not a 180-degree rotation. An earlier draft
-; assigned types by rotational symmetry instead (top-west=pistol,
-; top-east=shotgun), which looked harmlessly decorative but wasn't:
-; it meant team 0's top rows and team 1's top rows -- who end up
-; fighting each other, same row, same distance -- picked up DIFFERENT
-; weapons. Repeated test runs caught this as a massive, reproducible
-; bias (24 of 24 games won by whichever side's top rows got the
-; longer-ranged pistol). See the README for the full story.
+; Weapon TYPE is mirrored left-right (both top pickups pistols, both
+; bottom pickups shotguns), matching the teams' spawn symmetry -- see
+; stage6a/04_weapons.asm's spawn_pickups and the README for why this
+; matters: a rotationally-symmetric (instead of mirror-symmetric)
+; assignment here produced a reproducible 24-of-24 win rate for
+; whichever side's exposed rows happened to hold the pistol.
 spawn_pickups:
     lea r10, [pickups]
 
@@ -481,6 +512,32 @@ spawn_pickups:
     mov dword [r10 + 3*Pickup_size + Pickup.y], 400
     mov dword [r10 + 3*Pickup_size + Pickup.type], WEAPON_SHOTGUN
     mov dword [r10 + 3*Pickup_size + Pickup.active], 1
+    ret
+
+
+; void spawn_obstacles(void)
+; One wall, split into two segments with a gap in the middle (y
+; 220-380). Soldiers cross from the west spawn line to the east one
+; (or vice versa) to fight, which means crossing this wall's x-range
+; (370-430) at some point -- if their row falls inside a segment's
+; y-range, their direct path IS blocked and the perpendicular
+; side-step has to actually fire to route them toward the gap. This
+; is deliberately more aggressive than "scattered cover pieces,"
+; which (an earlier draft found) a symmetric spawn layout could
+; often route around by accident, without the avoidance code ever
+; really being exercised.
+spawn_obstacles:
+    lea r10, [obstacles]
+
+    mov dword [r10 + 0*Obstacle_size + Obstacle.x], 370
+    mov dword [r10 + 0*Obstacle_size + Obstacle.y], 0
+    mov dword [r10 + 0*Obstacle_size + Obstacle.w], 60
+    mov dword [r10 + 0*Obstacle_size + Obstacle.h], 220
+
+    mov dword [r10 + 1*Obstacle_size + Obstacle.x], 370
+    mov dword [r10 + 1*Obstacle_size + Obstacle.y], 380
+    mov dword [r10 + 1*Obstacle_size + Obstacle.w], 60
+    mov dword [r10 + 1*Obstacle_size + Obstacle.h], 220
     ret
 
 
@@ -563,8 +620,6 @@ find_nearest_enemy:
 
 
 ; int find_nearest_pickup(int self_index: edi) -> eax (index, or -1)
-; Same structure as find_nearest_enemy, scanning `pickups` instead
-; and filtering on `.active` instead of health/team.
 FNP_MY_X      equ -8
 FNP_MY_Y      equ -16
 FNP_BEST_IDX  equ -24
@@ -629,7 +684,6 @@ find_nearest_pickup:
 
 
 ; int get_weapon_range_sq(int weapon: edi) -> eax
-; A leaf function -- no calls, no locals, just a lookup.
 get_weapon_range_sq:
     cmp edi, WEAPON_KNIFE
     jne .not_knife
@@ -646,9 +700,6 @@ get_weapon_range_sq:
 
 
 ; void drop_weapon(int x: edi, int y: esi, int type: edx)
-; Claims the first inactive Pickup slot and activates it there. If
-; every slot is already in use, the weapon is silently lost -- an
-; acceptable simplification at this stage's scale (see the README).
 drop_weapon:
     push rbx
     xor ebx, ebx
@@ -676,19 +727,210 @@ drop_weapon:
     ret
 
 
-; void update_soldiers(void)
-; See the header comment above for the overall shape: decide a goal
-; (a pickup if unarmed and one's closer than any living enemy,
-; otherwise the nearest living enemy), then either move toward it or
-; act on it (pick up / attack) depending on distance.
+; int is_box_blocked(int x: edi, int y: esi) -> eax (1 or 0)
 ;
-; r12/r13/r14 hold (damage, hit_chance, cooldown_ticks) once an
-; attack is actually resolved -- callee-saved, so they survive the
-; `call rand` in between choosing them and using them. Everything
-; else that must survive a `call` lives in named stack locals, same
-; reasoning as draw_line back in stage3: memory survives a call for
-; free, and there are far more values in flight here than there are
-; spare registers.
+; Tests the soldier's actual SOLDIER_SIZE x SOLDIER_SIZE body (a box
+; anchored at x,y -- matching exactly what fill_rect draws), not just
+; the bare corner point. An earlier draft (named is_point_in_obstacle)
+; tested only the point, which meant a soldier could visually overlap
+; up to SOLDIER_SIZE-1 pixels of a wall before their tracked corner
+; itself registered as blocked -- looked like walking partway through
+; solid cover. Two axis-aligned boxes overlap unless one is entirely
+; to the left/right/above/below the other; that's the four `jge`s
+; below (the standard AABB-overlap test, its usual form negated once
+; since we want "blocked" = "they DO overlap").
+;
+; Also treats anything off the SCREEN_W x SCREEN_H field as blocked,
+; not just points inside an Obstacle rect (now checking the FULL box
+; stays on-screen, same reasoning, not just its corner). Found the
+; hard way: the perpendicular side-step in update_soldiers applies a
+; raw add/sub to Soldier.x/y with no clamp of its own (unlike the
+; normal clamped-toward-goal move, which never wanders off-screen
+; because goals are always on-screen) -- with obstacle0 sitting right
+; at the top edge (y=0), a soldier repeatedly routed "up" around it
+; walked straight off the field into negative y, and fill_rect's
+; write ("row * pitch + col * 4") only clips the FAR edge, never
+; checks for a negative one, which corrupted the write address into
+; unmapped memory and segfaulted. Every side-step decision already
+; funnels through this one function, so treating the screen edge as
+; just another kind of "can't go there" fixes it at the single source
+; instead of adding a bounds check to every caller.
+is_box_blocked:
+    cmp edi, 0
+    jl .blocked
+    mov eax, edi
+    add eax, SOLDIER_SIZE
+    cmp eax, SCREEN_W
+    jg .blocked
+    cmp esi, 0
+    jl .blocked
+    mov eax, esi
+    add eax, SOLDIER_SIZE
+    cmp eax, SCREEN_H
+    jg .blocked
+    jmp .check_obstacles
+.blocked:
+    mov eax, 1
+    ret
+.check_obstacles:
+    push rbx
+    xor ebx, ebx
+.iio_loop:
+    cmp ebx, NUM_OBSTACLES
+    jge .iio_clear
+
+    mov eax, ebx
+    imul eax, Obstacle_size
+    lea r10, [obstacles]
+    add r10, rax
+
+    ; soldier box: [edi, edi+SOLDIER_SIZE) x [esi, esi+SOLDIER_SIZE)
+    ; obstacle box: [Obstacle.x, Obstacle.x+w) x [Obstacle.y, Obstacle.y+h)
+    ; NOT overlapping (skip this obstacle) if the soldier box is
+    ; entirely left of, right of, above, or below the obstacle box
+    mov eax, edi
+    add eax, SOLDIER_SIZE
+    cmp eax, [r10 + Obstacle.x]
+    jle .iio_next                        ; soldier box entirely left of obstacle
+
+    mov eax, [r10 + Obstacle.x]
+    add eax, [r10 + Obstacle.w]
+    cmp edi, eax
+    jge .iio_next                        ; soldier box entirely right of obstacle
+
+    mov eax, esi
+    add eax, SOLDIER_SIZE
+    cmp eax, [r10 + Obstacle.y]
+    jle .iio_next                        ; soldier box entirely above obstacle
+
+    mov eax, [r10 + Obstacle.y]
+    add eax, [r10 + Obstacle.h]
+    cmp esi, eax
+    jge .iio_next                        ; soldier box entirely below obstacle
+
+    mov eax, 1
+    pop rbx
+    ret
+.iio_next:
+    inc ebx
+    jmp .iio_loop
+.iio_clear:
+    xor eax, eax
+    pop rbx
+    ret
+
+
+; int line_blocked(int x0: edi, int y0: esi, int x1: edx, int y1: ecx) -> eax (1 or 0)
+; Stage3's draw_line, Bresenham step for Bresenham step -- set_pixel
+; is replaced with a call to is_box_blocked, and the walk exits
+; the moment any step is blocked instead of always visiting every
+; point on the line.
+LB_X0  equ -8
+LB_Y0  equ -16
+LB_X1  equ -24
+LB_Y1  equ -32
+LB_SX  equ -40
+LB_SY  equ -48
+LB_DX  equ -56
+LB_DY  equ -64
+LB_ERR equ -72
+
+line_blocked:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 80
+
+    mov [rbp + LB_X0], edi
+    mov [rbp + LB_Y0], esi
+    mov [rbp + LB_X1], edx
+    mov [rbp + LB_Y1], ecx
+
+    mov eax, [rbp + LB_X1]
+    sub eax, [rbp + LB_X0]
+    jns .dx_nonneg
+    neg eax
+.dx_nonneg:
+    mov [rbp + LB_DX], eax
+
+    mov eax, [rbp + LB_X0]
+    cmp eax, [rbp + LB_X1]
+    mov eax, 1
+    jl .sx_done
+    mov eax, -1
+.sx_done:
+    mov [rbp + LB_SX], eax
+
+    mov eax, [rbp + LB_Y1]
+    sub eax, [rbp + LB_Y0]
+    jns .dy_nonneg
+    neg eax
+.dy_nonneg:
+    neg eax
+    mov [rbp + LB_DY], eax
+
+    mov eax, [rbp + LB_Y0]
+    cmp eax, [rbp + LB_Y1]
+    mov eax, 1
+    jl .sy_done
+    mov eax, -1
+.sy_done:
+    mov [rbp + LB_SY], eax
+
+    mov eax, [rbp + LB_DX]
+    add eax, [rbp + LB_DY]
+    mov [rbp + LB_ERR], eax
+
+.step_loop:
+    mov edi, [rbp + LB_X0]
+    mov esi, [rbp + LB_Y0]
+    call is_box_blocked
+    test eax, eax
+    jz .not_blocked_here
+    mov eax, 1
+    mov rsp, rbp
+    pop rbp
+    ret
+.not_blocked_here:
+    mov eax, [rbp + LB_X0]
+    cmp eax, [rbp + LB_X1]
+    jne .continue_step
+    mov eax, [rbp + LB_Y0]
+    cmp eax, [rbp + LB_Y1]
+    je .lb_clear
+.continue_step:
+    mov eax, [rbp + LB_ERR]
+    add eax, eax
+
+    cmp eax, [rbp + LB_DY]
+    jl .skip_x
+    mov ecx, [rbp + LB_ERR]
+    add ecx, [rbp + LB_DY]
+    mov [rbp + LB_ERR], ecx
+    mov ecx, [rbp + LB_X0]
+    add ecx, [rbp + LB_SX]
+    mov [rbp + LB_X0], ecx
+.skip_x:
+    cmp eax, [rbp + LB_DX]
+    jg .skip_y
+    mov ecx, [rbp + LB_ERR]
+    add ecx, [rbp + LB_DX]
+    mov [rbp + LB_ERR], ecx
+    mov ecx, [rbp + LB_Y0]
+    add ecx, [rbp + LB_SY]
+    mov [rbp + LB_Y0], ecx
+.skip_y:
+    jmp .step_loop
+.lb_clear:
+    xor eax, eax
+    mov rsp, rbp
+    pop rbp
+    ret
+
+
+; void update_soldiers(void)
+; Same overall shape as stage6a/04. The one change: `.do_move` now
+; checks line_blocked before taking the direct clamped step, and
+; side-steps perpendicular to the goal direction if blocked.
 US_I         equ -32
 US_ACTUAL    equ -40
 US_SELF_X    equ -48
@@ -707,14 +949,12 @@ update_soldiers:
     push r12
     push r13
     push r14
-    sub rsp, 8               ; alignment pad (rbp+3 pushes = even -> need this)
-    sub rsp, 96               ; locals (US_I .. US_DIST_SQ all fit within rbp-32..rbp-120)
+    sub rsp, 8
+    sub rsp, 96
 
     call rand                  ; per-tick random processing direction (03_combat.asm's
-    and eax, 1                    ; fair-turn-order fix) -- this call went missing when
-    mov [pass_reverse], eax          ; this file was rewritten fresh from 03, silently
-                                         ; reintroducing the exact bias it fixed; see the
-                                         ; README for how repeated runs caught it
+    and eax, 1                    ; fair-turn-order fix) -- was missing here too, carried
+    mov [pass_reverse], eax          ; over from stage6a/04_weapons.asm's same regression
 
     mov dword [rbp + US_I], 0
 .update_loop:
@@ -755,7 +995,6 @@ update_soldiers:
     cmp dword [rbp + US_WEAPON], WEAPON_KNIFE
     jne .have_enemy_only
 
-    ; ---- unarmed: weigh nearest pickup against nearest enemy ----
     mov edi, [rbp + US_ACTUAL]
     call find_nearest_pickup
     mov [rbp + US_PICKUP_IDX], eax
@@ -778,10 +1017,10 @@ update_soldiers:
     mov eax, [r10 + Pickup.y]
     sub eax, [rbp + US_SELF_Y]
     imul eax, eax
-    add ecx, eax                       ; ecx = pickup_dist_sq
+    add ecx, eax
 
     cmp dword [rbp + US_TARGET], -1
-    je .use_pickup_goal                    ; no living enemy at all
+    je .use_pickup_goal
 
     mov eax, [rbp + US_TARGET]
     imul eax, Soldier_size
@@ -794,7 +1033,7 @@ update_soldiers:
     mov eax, [r10 + Soldier.y]
     sub eax, [rbp + US_SELF_Y]
     imul eax, eax
-    add edx, eax                          ; edx = enemy_dist_sq (ecx still = pickup_dist_sq)
+    add edx, eax
 
     cmp ecx, edx
     jl .use_pickup_goal
@@ -911,12 +1150,12 @@ update_soldiers:
 .have_atk_stats:
     mov [r10 + Soldier.cooldown], r14d
 
-    call rand                    ; clobbers r10/r11 -- NOT r12/r13/r14 (callee-saved)
+    call rand
     xor edx, edx
     mov ecx, 100
     div ecx
     cmp edx, r13d
-    jge .update_next                ; miss
+    jge .update_next
 
     mov eax, [rbp + US_TARGET]
     imul eax, Soldier_size
@@ -939,6 +1178,95 @@ update_soldiers:
     jmp .update_next
 
 .do_move:
+    ; ---- is the direct path to the goal clear? ----
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    mov edx, [rbp + US_GOAL_X]
+    mov ecx, [rbp + US_GOAL_Y]
+    call line_blocked
+    test eax, eax
+    jz .path_clear
+
+    ; ---- blocked: step perpendicular to the goal direction instead ----
+    mov eax, [rbp + US_GOAL_X]
+    sub eax, [rbp + US_SELF_X]           ; dx
+    mov ecx, [rbp + US_GOAL_Y]
+    sub ecx, [rbp + US_SELF_Y]              ; dy
+
+    mov edx, eax
+    cmp edx, 0
+    jns .dx_abs_ok
+    neg edx
+.dx_abs_ok:
+    mov r8d, ecx
+    cmp r8d, 0
+    jns .dy_abs_ok
+    neg r8d
+.dy_abs_ok:
+    cmp edx, r8d
+    jl .try_horizontal
+
+    ; goal is mostly sideways -- the obstacle is blocking horizontal
+    ; travel, so try stepping vertically around it: up first, then down
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    sub esi, MOVE_SPEED
+    call is_box_blocked
+    test eax, eax
+    jz .apply_up
+
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    add esi, MOVE_SPEED
+    call is_box_blocked
+    test eax, eax
+    jnz .update_next                 ; both sides blocked -- hold position
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    add dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+.apply_up:
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    sub dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+
+.try_horizontal:
+    ; goal is mostly vertical -- try stepping left first, then right
+    mov edi, [rbp + US_SELF_X]
+    sub edi, MOVE_SPEED
+    mov esi, [rbp + US_SELF_Y]
+    call is_box_blocked
+    test eax, eax
+    jz .apply_left
+
+    mov edi, [rbp + US_SELF_X]
+    add edi, MOVE_SPEED
+    mov esi, [rbp + US_SELF_Y]
+    call is_box_blocked
+    test eax, eax
+    jnz .update_next
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    add dword [r10 + Soldier.x], MOVE_SPEED
+    jmp .update_next
+.apply_left:
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    sub dword [r10 + Soldier.x], MOVE_SPEED
+    jmp .update_next
+
+.path_clear:
     mov eax, [rbp + US_ACTUAL]
     imul eax, Soldier_size
     lea r10, [soldiers]
@@ -1117,34 +1445,40 @@ fill_rect:
 ; ------------------------------------------------------------
 ; Build and run:
 ;   make
-;   ./build/04_weapons
-; Knife-only soldiers should visibly detour toward the nearest yellow
-; (pistol) or purple (shotgun) marker before engaging. Watch for a
-; soldier who grabs a shotgun getting noticeably more dangerous up
-; close, and outmatched by pistols at range.
+;   ./build/01_obstacles
+; A grayish-brown wall (two segments, a gap in the middle) now splits
+; the field roughly down the center. Soldiers whose straight path to
+; their goal is blocked by a segment should visibly sidestep toward
+; the gap instead of walking through it.
 ;
 ; Try this in gdb:
-;   (gdb) break update_soldiers.handle_pickup_goal
+;   (gdb) print (int)is_box_blocked(400, 100)   # won't work --
+;     gdb can't call our functions like C ones without more setup.
+;     Instead, break inside it and inspect:
+;   (gdb) break is_box_blocked
 ;   (gdb) run
-;   (gdb) print *(int*)(&pickups + 32)          # a mid-array pickup's
-;                                                    x, to sanity check
-;                                                    Pickup_size*i math
+;   (gdb) print $edi
+;   (gdb) print $esi
+;   (gdb) finish                # shows the return value once debug
+;                                   info allows it, or check $eax after
 ;
 ; Questions to answer by experimenting:
-;   - Set PISTOL_RANGE below CONTACT_RANGE. Rebuild. What happens to a
-;     pistol-armed soldier facing an enemy that's closer than
-;     PISTOL_RANGE but where CONTACT_RANGE would also apply -- does
-;     get_weapon_range_sq's lookup still make sense, or does this
-;     reveal an assumption the code was quietly relying on?
-;   - Two knife-only soldiers on the SAME team are equidistant from
-;     the same pickup, and both currently think it's their best goal.
-;     Can they end up BOTH walking to it, and only one successfully
-;     grabbing it (since `.active` is checked again by whichever
-;     iterates last)? Trace this through `pass_reverse`'s random
-;     ordering to see why the "winner" isn't predictable in advance.
-;   - `drop_weapon` silently does nothing if all MAX_PICKUPS slots are
-;     full. Estimate how many soldiers would need to die while
-;     holding a non-knife weapon, with the 4 starting pickups already
-;     occupied, before a drop could actually get lost. Is 8 total
-;     slots enough headroom for a 16-soldier fight in practice?
+;   - Temporarily close the gap -- change the second segment's height
+;     in spawn_obstacles so the two segments together span the whole
+;     field, y=0 to y=600, with no opening. Rebuild and watch what
+;     happens to soldiers trying to cross it -- does the perpendicular
+;     side-step ever get them through, or do they just slide along the
+;     wall forever? What does this tell you about the real difference
+;     between this technique and actual pathfinding?
+;   - `line_blocked` walks EVERY point between two soldiers that might
+;     be 600+ pixels apart, calling `is_box_blocked` (itself a
+;     loop over NUM_OBSTACLES) at every single step. Work out roughly
+;     how many total checks one `do_move` call can trigger in the
+;     worst case, and compare that to stage6a's README note about
+;     50v50 performance headroom -- does this change the answer?
+;   - The vertical-vs-horizontal choice in the "blocked" branch is
+;     based on which of |dx|/|dy| is bigger. Construct a scenario
+;     (goal position relative to self) where this heuristic picks the
+;     WRONG axis to slide along -- i.e., sliding the chosen way still
+;     can't clear the obstacle, but the other axis would have.
 ; ------------------------------------------------------------
