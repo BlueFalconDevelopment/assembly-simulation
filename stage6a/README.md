@@ -2,7 +2,9 @@
 
 The capstone's first sub-step: prove the whole soldier/AI/combat loop
 works at 8-vs-8 before scaling anything up (6c) or adding obstacles
-(6b). Four programs, each adding one layer on top of the last.
+(6b). Four programs, each adding one layer on top of the last. All
+four run the full open-field knife/pistol/shotgun deathmatch the
+roadmap describes for 6a.
 
 ## Build everything
 
@@ -28,8 +30,17 @@ make clean
    check that freezes the sim and prints the winner via a raw `write`
    syscall — the same technique from stage0/1, still the right tool
    for a one-off status line.
-
-(`04`, weapon pickups, is next.)
+4. **`04_weapons.asm`** — adds a `Pickup` struct array (four fixed
+   starting spawns: two pistols, two shotguns) and the full roadmap
+   rule: a knife-only soldier compares its nearest active pickup's
+   squared distance against its nearest living enemy's, and goes for
+   whichever is closer. Combat stats now depend on the weapon —
+   pistol trades knife's guaranteed damage for range, shotgun has
+   real falloff (better odds and damage close up, worse at the edge
+   of its range, decided by the actual distance at the moment of
+   firing). An armed soldier that dies drops its weapon back onto the
+   field at its death position, recycling a free `Pickup` slot, and
+   it stays in circulation for anyone to grab.
 
 ## A real bug, found and fixed during verification
 
@@ -114,7 +125,6 @@ cat /tmp/out.txt
 
 ## What's deliberately not here yet
 
-- No weapons beyond the knife, no pickups — `04` adds both.
 - No obstacles or line-of-sight — `6b`.
 - Only 8v8 — `6c` is purely "bump `NUM_PER_TEAM`, confirm nothing
   else needs to change," already set up for by writing everything in
