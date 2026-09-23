@@ -10,7 +10,7 @@
 - **`stage6c/batch.sh N [binary]`** runs N headless games and tallies wins/stuck/crashed. It works on any stage's binary. Use it for any fairness check (see traps below).
 - **Extensive session walkthrough** (Stages 0–6b) in `~/Claude/tech-blog/newPOSTS/` for a future blog post. 6c isn't written up there yet; `stage6c/README.md` has the whole story.
 
-**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified; see `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
+**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified, and `04_attack_fx` adds drawing-only attack animations (knife thrusts, pistol/shotgun tracers, impact sparks, hit flashes), verified in gdb to play the identical game to `03` for a fixed seed; see `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
 
 ### Where to go from here (optional, nothing required)
 
@@ -18,7 +18,7 @@ The roadmap is complete. Natural next steps, roughly in order of payoff:
 1. ~~Finer seed than `time(NULL)`~~ Done in `stage7/03_xorshift` (`rdtsc` + splitmix64).
 2. ~~Soldier-vs-soldier collision~~ Done in `stage7/01_collision`.
 3. ~~Hand-rolled xorshift~~ Done in `stage7/03_xorshift`.
-4. Write up 6c for the blog post.
+4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02. 7.03 (xorshift) and 7.04 (attack animations) aren't written up yet.
 
 ### Traps to avoid (hard-won this session)
 

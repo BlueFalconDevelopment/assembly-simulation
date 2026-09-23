@@ -176,3 +176,67 @@ Staggering is still the default, because `01` and `02` still seed from
   **49–47 combined**. 0 stuck, 0 crashed. (Wall-clock game lengths are
   longer in these batches, median ~29s, because 48 games shared 16 CPU
   threads at once.)
+
+## `04_attack_fx.asm` — attack animations
+
+Until now an attack was invisible. The only sign of combat was a
+soldier disappearing when it died. Now:
+
+- **Knife:** a 2px near-white blade slides from the attacker toward
+  the target and pulls back (`KNIFE_LIFE` = 10 frames, fully extended
+  at frame 5).
+- **Pistol:** a yellow tracer flies from shooter to target in
+  `BULLET_TRAVEL` = 8 frames.
+- **Shotgun:** three orange pellet tracers in a fan, `PELLET_SPREAD`
+  = 8px apart at the target.
+- **Hit:** when the tracer or blade arrives, the target flashes white
+  for 6 frames, and each tracer end gets a small spark that shrinks.
+- **Miss:** the tracer aims `MISS_OFFSET` spreads to one side and 25%
+  past the target, so you can see it fly by.
+
+**It's drawing only.** `update_soldiers` still makes the same hit roll
+at the same moment. It now also passes the result to `spawn_effect`,
+which writes an entry in a 128-slot ring buffer. `draw_effects` runs
+once per rendered frame, draws each entry, then ages it one frame.
+Nothing in the effect code calls `rng_next` or writes to a soldier.
+The miss side alternates with the ring-buffer slot number instead of
+coming from a random draw, because one extra random draw would change
+every game from then on.
+
+**Dead soldiers stay on screen briefly.** Damage still lands on the
+tick of the attack, so a killing bullet would reach an empty spot 8
+frames later. `spawn_effect` sets `death_linger` for the target so
+the body stays drawn through the tracer's arrival and the flash. Only
+the renderer reads it. Collision, targeting and the win check all
+still check `health`, so a lingering body can't block anyone or be
+shot again.
+
+**Two small pieces of plumbing:**
+- `draw_line`, Stage 3's Bresenham, copied unchanged. It's the third
+  use of the same line walk, after drawing in Stage 3 and
+  `line_blocked` in 6b.
+- `fill_rect` now clips at the left and top edges, not only the right
+  and bottom. Nothing had drawn at a negative coordinate before. A
+  spark at the end of an outer shotgun pellet can, and a negative `y`
+  would have written before the start of `back_buffer`.
+
+The perpendicular for the pellet fan is `(-dy, dx) * SPREAD /
+max(|dx|, |dy|)`. Dividing by the larger axis instead of the true
+length skips a square root. It comes out 1x to 1.41x too long
+depending on the angle, which doesn't matter for a spread.
+
+### Verification
+
+- **Same game as 03, byte for byte.** In gdb, `rng_state` set to the
+  same fixed value in both `03` and `04`, then run until `game_over`
+  was written. For three seeds (`0x0123456789abcdef`,
+  `0xdeadbeefcafef00d`, `0x5eed5eed12345678`), the whole `soldiers`
+  and `pickups` arrays and the final `rng_state` were identical. So
+  the effects don't use the RNG or change the fight, and fairness
+  carries over from 03 without a new batch run.
+- **Batch:** `STAGGER=0 ./batch.sh 48` gave 27–21, 0 stuck, 0 crashed.
+- **Looked at it:** 10 consecutive frames dumped from `back_buffer`
+  mid-fight showed tracers moving along their paths, the shotgun fan,
+  sparks, white flashes on hit targets, and knife thrusts.
+- One bug caught on review before running: `spawn_effect` read the
+  target index from `edx` after `cdq`/`idiv` had overwritten it.
