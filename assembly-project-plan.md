@@ -18,7 +18,7 @@ The roadmap is complete. Natural next steps, roughly in order of payoff:
 1. ~~Finer seed than `time(NULL)`~~ Done in `stage7/03_xorshift` (`rdtsc` + splitmix64).
 2. ~~Soldier-vs-soldier collision~~ Done in `stage7/01_collision`.
 3. ~~Hand-rolled xorshift~~ Done in `stage7/03_xorshift`.
-4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02. 7.03 (xorshift), 7.04 (attack animations), 7.05 (friendly fire) and 7.06 (hold fire) aren't written up yet.
+4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02; `Part 3 - Our Own RNG, Tracers, and Friendly Fire` covers 7.03–7.06.
 
 ### Traps to avoid (hard-won this session)
 
