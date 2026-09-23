@@ -123,3 +123,56 @@ only other new code. Nothing in `update_soldiers` changed.
 - **No overlaps:** the same per-tick overlap check from `01`, rebuilt on
   this file, ran 24 games clean.
 - Game length 15–32s (median ~22s), about the same as `01`.
+
+## `03_xorshift.asm` — our own RNG instead of libc's
+
+libc's `rand()`, `srand()` and `time()` are gone. The binary no longer
+imports any of them (`nm` confirms it). In their place:
+
+- **`rng_next`** is Marsaglia's xorshift64: `x ^= x << 13; x ^= x >> 7;
+  x ^= x << 17`. Three shift-and-xor steps, no multiply or divide, and
+  a period of 2^64 − 1. It returns the **high** 32 bits, because a
+  plain xorshift's low bits are its weakest, and `update_soldiers` uses
+  exactly one bit of every draw (`and eax, 1`) to pick the per-tick
+  processing direction. That's the fairness fix from stage6a whose
+  accidental removal was stage6b's bug #2, so it gets the best bit
+  available.
+- **`rng_seed`** reads the CPU's timestamp counter (`rdtsc`) and runs it
+  through splitmix64's finalizer before storing it. xorshift is linear,
+  so two raw seeds a few cycles apart would produce early outputs that
+  differ in only a few bits; the mix spreads every input bit across the
+  whole state. It also guards the one bad state (0, which maps to 0
+  forever).
+
+Every call site just changes `call rand` to `call rng_next`. The callers
+only ever did `and eax, 1` or an unsigned `div`, so a full 32-bit
+result, instead of `rand()`'s 0..RAND_MAX, needs no other changes.
+`rng_next` clobbers only `rax` and `rdx`, less than `rand()` was
+allowed to.
+
+**Side effect: `batch.sh` doesn't need to stagger anymore.** `rdtsc`
+changes billions of times a second, so games launched together get
+different seeds. `STAGGER=0 ./batch.sh 48` launches everything at once.
+Staggering is still the default, because `01` and `02` still seed from
+`time()`.
+
+### Verification
+
+- **Matches a reference implementation:** in gdb, `rng_state` set to
+  `0x0123456789abcdef`, then three calls to `rng_next`, gave
+  `0x3f2800d6, 0x606f949a, 0xc69bba40` and final state
+  `0xc69bba40dddccad6`. A Python xorshift64 gives exactly the same.
+  `rng_seed` was checked the same way, by overwriting `rdtsc`'s output
+  in gdb with a fixed value: the stored state matched Python's
+  splitmix64 bit for bit.
+- **Distribution** (same algorithm in Python, 1M draws): bit 0 set
+  50.01% of the time, and every `% 100` hit-roll bucket between 9,752
+  and 10,266 against an expected 10,000, normal spread for 100 buckets.
+- **Distinct games with simultaneous launches:** 48 games started at
+  once had durations from 25s to 39.5s, with 40 distinct values among
+  46 readable result lines. Under the old `time()` seeding they would
+  all have been the same game.
+- **Fairness:** two simultaneous 48-game batches, 25–23 and 24–24,
+  **49–47 combined**. 0 stuck, 0 crashed. (Wall-clock game lengths are
+  longer in these batches, median ~29s, because 48 games shared 16 CPU
+  threads at once.)

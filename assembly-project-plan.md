@@ -10,14 +10,14 @@
 - **`stage6c/batch.sh N [binary]`** runs N headless games and tallies wins/stuck/crashed. It works on any stage's binary. Use it for any fairness check (see traps below).
 - **Extensive session walkthrough** (Stages 0–6b) in `~/Claude/tech-blog/newPOSTS/` for a future blog post. 6c isn't written up there yet; `stage6c/README.md` has the whole story.
 
-**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap) and `02_random_spawn` (random, mirrored spawn points and jittered pickups) are done and batch-verified; see `stage7/README.md`.
+**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified; see `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
 
 ### Where to go from here (optional, nothing required)
 
 The roadmap is complete. Natural next steps, roughly in order of payoff:
-1. Seed `srand` with something finer than `time(NULL)` (e.g. `SDL_GetPerformanceCounter`), so `batch.sh` can launch games all at once instead of one per second.
+1. ~~Finer seed than `time(NULL)`~~ Done in `stage7/03_xorshift` (`rdtsc` + splitmix64).
 2. ~~Soldier-vs-soldier collision~~ Done in `stage7/01_collision`.
-3. Swap libc `rand()` for a hand-rolled xorshift (the "later swap-in" the design section mentions).
+3. ~~Hand-rolled xorshift~~ Done in `stage7/03_xorshift`.
 4. Write up 6c for the blog post.
 
 ### Traps to avoid (hard-won this session)

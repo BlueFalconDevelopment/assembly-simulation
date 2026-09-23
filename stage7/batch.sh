@@ -2,6 +2,7 @@
 # Run N headless games in parallel and count who wins.
 #
 #   ./batch.sh [games=20] [binary=newest in build/] [timeout_s=120]
+#   STAGGER=0 ./batch.sh ...    # launch all at once (03_xorshift and later)
 #
 # Every fairness bug in 6a/6b was invisible in a single game and only
 # showed up by counting wins over 10-20+ runs -- this does that counting
@@ -48,9 +49,12 @@ run_one() {
 # Launch every game in the same second and they all get the SAME seed
 # and play the SAME game, so a 16-0 result means nothing (this harness's
 # first version did exactly that). Start each game in its own second.
+# From 03_xorshift on, the game seeds from rdtsc instead, so STAGGER=0
+# is safe for those binaries and makes a batch take seconds, not a minute.
+stagger=${STAGGER:-1}
 for i in $(seq "$games"); do
     run_one &
-    [ "$i" -lt "$games" ] && sleep 1.05
+    [ "$stagger" != 0 ] && [ "$i" -lt "$games" ] && sleep 1.05
 done | tee /dev/stderr | {
     t0=0; t1=0; stuck=0; crash=0
     while read -r l; do
