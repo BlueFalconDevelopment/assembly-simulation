@@ -10,7 +10,7 @@
 - **`stage6c/batch.sh N [binary]`** runs N headless games and tallies wins/stuck/crashed. It works on any stage's binary. Use it for any fairness check (see traps below).
 - **Extensive session walkthrough** (Stages 0–6b) in `~/Claude/tech-blog/newPOSTS/` for a future blog post. 6c isn't written up there yet; `stage6c/README.md` has the whole story.
 
-**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified, and `04_attack_fx` adds drawing-only attack animations (knife thrusts, pistol/shotgun tracers, impact sparks, hit flashes), verified in gdb to play the identical game to `03` for a fixed seed; see `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
+**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified, and `04_attack_fx` adds drawing-only attack animations (knife thrusts, pistol/shotgun tracers, impact sparks, hit flashes), verified in gdb to play the identical game to `03` for a fixed seed. `05_friendly_fire` makes pistol/shotgun shots hit the first soldier in the line of fire (either team): 72–72 over 144 games, ~15 friendly kills per game. `06_hold_fire` has soldiers check the line before firing and side-step if a teammate is in it: 0 friendly fire, 142–146 over 288 games after fixing a 1px mirror asymmetry in `first_in_line` (now walks in half-pixel units). See `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
 
 ### Where to go from here (optional, nothing required)
 
@@ -18,7 +18,7 @@ The roadmap is complete. Natural next steps, roughly in order of payoff:
 1. ~~Finer seed than `time(NULL)`~~ Done in `stage7/03_xorshift` (`rdtsc` + splitmix64).
 2. ~~Soldier-vs-soldier collision~~ Done in `stage7/01_collision`.
 3. ~~Hand-rolled xorshift~~ Done in `stage7/03_xorshift`.
-4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02. 7.03 (xorshift) and 7.04 (attack animations) aren't written up yet.
+4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02. 7.03 (xorshift), 7.04 (attack animations), 7.05 (friendly fire) and 7.06 (hold fire) aren't written up yet.
 
 ### Traps to avoid (hard-won this session)
 
@@ -26,6 +26,7 @@ The roadmap is complete. Natural next steps, roughly in order of payoff:
 - **Sampling once a second can hide an infinite loop.** The nastiest bug this session (a soldier stuck oscillating between two positions forever, `y=0 -> y=2 -> y=0 -> ...`) looked like a plain freeze when sampled every 60 ticks, and only became obvious tracing every single tick. If something looks "stuck," trace every tick for a short window before concluding it's just slow.
 - **A raw `syscall` clobbers `rcx` and `r11`.** Used more than once this session for quick debug `write()` prints stuffed into the middle of existing code — if `r11` (or `rcx`) is holding something you still need afterward, save/restore it around the syscall or you'll get a very confusing crash that looks unrelated to the actual change.
 - **"Symmetric" has to mean symmetric under the mirror, in every rule, not just in the spawn data.** 6c's big bias (9–39) came from a movement rule (`.try_horizontal` always tried −x first), which is "the same for both teams" in code but means *toward the enemy* for one team and *away* for the other. Quick test: swap which side each team spawns on and batch again. If the bias follows the side rather than the team, look at map/movement rules, not processing order.
+- **Box "centres" aren't mirror-symmetric in whole pixels.** A 16px box at `x` has no centre pixel; `x+8` mirrors to 1px off the mirrored box's `x+8`. Anything that draws lines between soldier centres and acts on the result (e.g. `first_in_line` in 7.06) should work in half-pixel units (`2x + 15`).
 - **Batch runs need distinct seeds.** `srand(time(NULL))` has one-second resolution, so games launched in the same second play the *identical* game. `batch.sh`'s first version reported 16–0 twice from this. The giveaway was every game having the exact same duration.
 - **`gcc -no-pie` is required** when linking anything that calls SDL2 (or any extern C function) from hand-written asm using plain `call func` — without it you get `relocation ... can not be used when making a PIE object`. Already baked into every stage's Makefile from stage2 onward; just don't drop it if writing a new one from scratch.
 

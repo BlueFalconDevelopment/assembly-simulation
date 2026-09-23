@@ -240,3 +240,106 @@ depending on the angle, which doesn't matter for a spread.
   sparks, white flashes on hit targets, and knife thrusts.
 - One bug caught on review before running: `spawn_effect` read the
   target index from `edx` after `cdq`/`idiv` had overwritten it.
+
+## `05_friendly_fire.asm` — shots hit whoever is in the way
+
+Before, a pistol or shotgun shot could only hit the soldier it was
+aimed at. It passed through anyone standing in between, teammates
+included. Now **`first_in_line(shooter, target)`** walks the line of
+fire from the shooter's centre to the target's centre. That's the
+fourth use of the Stage 3 Bresenham walk. At each point it checks
+every living soldier's box, skipping the shooter, and the first box
+it enters takes the shot, from either team. The hit roll, damage and
+weapon drop are unchanged; they just apply to that soldier. The
+attack animation follows the shot too, so the tracer ends at whoever
+actually got hit.
+
+The box test uses an unsigned-compare trick: `0 <= x - box.x < SIZE`
+is a single `cmp eax, SOLDIER_SIZE` / `jae`. A negative difference
+compared as unsigned is huge, so it fails the same test.
+
+The knife is unaffected. It's contact range, so the target is the
+only soldier it can reach.
+
+Soldiers **don't** check for teammates before firing. That's
+deliberate for now, to measure how much friendly fire actually
+happens (see below).
+
+The win line now reports friendly fire, still in a single `write()`
+so `batch.sh`'s "stop at the first output" check can't catch half a
+line:
+
+```
+Team 0 (blue) wins! (friendly fire: 128 hits, 18 kills)
+```
+
+The number printing (`append_uint`) divides by 10 and writes the
+digits backwards into the System V red zone, the 128 bytes below
+`rsp` that a leaf function may use without adjusting the stack.
+
+### Verification
+
+- **Fairness:** three 48-game batches, 22–26, 30–18 and 20–28,
+  **72–72 combined**. 0 stuck, 0 crashed.
+- **How much friendly fire:** over 47 games with readable result
+  lines, an average of **128 friendly hits and 15 friendly kills per
+  game**, with a maximum of 152 hits and 22 kills. So roughly one death
+  in seven now comes from a soldier's own team. Soldiers in back
+  shoot through the ones in front, mostly around the gap in the wall.
+  06 adds holding fire.
+- Later fixed (found while verifying 06): `first_in_line` now works
+  in half-pixel units so it's exactly mirror-symmetric. See 06. After
+  the fix, 05 batched 66–78 over 144 games, about the same friendly
+  fire (129 hits, 15.5 kills per game), 0 stuck, 0 crashed.
+
+## `06_hold_fire.asm` — don't shoot through your own team
+
+Once a pistol or shotgun's cooldown is up, the soldier calls
+`first_in_line` *before* firing. If a teammate would take the shot,
+it holds fire and jumps to `.side_step`, the same sticky
+perpendicular step used to get around walls. `US_GOAL` is the target
+here, so the step goes across the line of fire, and the soldier
+checks again on the next tick. An enemy in the way is still fine:
+that enemy takes the shot. The win line adds a count:
+
+```
+Team 1 (red) wins! (friendly fire: 0 hits, 0 kills; held fire 3036 times)
+```
+
+### A fairness bug: soldier "centres" weren't mirror images
+
+The first ten 48-game batches came out **221–259**. Red was ahead in
+7 of the 10, and a split that far from even happens by chance only
+about 1 time in 12. Suspicious enough, given the project's history,
+to look for a cause.
+
+`first_in_line` walked from `x + 8` to `x + 8`. A 16px box covers
+pixels `x .. x+15` and has no centre pixel: `x+8` is 8 pixels from
+the left edge but 7 from the right. The mirror image of pixel `x+8`
+is `W-9-x`, but the mirrored soldier (at `W-16-x`) puts its "centre"
+at `W-8-x`. So every line of fire for team 1 was 1px off from the
+mirror of team 0's, while the boxes it tests against mirror exactly.
+05 asked the question once per shot. 06 asks it about 3,300 times a
+game and acts on the answer by moving, which gives a 1px asymmetry
+far more chances to add up.
+
+**Fix:** walk the line in half-pixel units (double every coordinate).
+The centre becomes exactly `2x + 15` and a box exactly `[2x, 2x+30]`.
+Both mirror exactly, and neighbouring boxes (16px apart = 32 units)
+can't share a point. The Bresenham walk itself needed nothing: its
+step decisions depend only on |dx| and |dy|, so a mirrored line walks
+the mirrored path. The same fix went into 05.
+
+After the fix: **142–146** over six batches (288 games). The first
+288 games before the fix were 131–157. The fix is justified by the
+geometry either way. Before it, the lean was suggestive but never
+conclusive (about 1 in 12).
+
+### Verification
+
+- **Fairness (after the fix):** 142–146 over 288 games. 0 stuck, 0
+  crashed.
+- **Friendly fire:** 0 hits, 0 kills in all 282 readable result lines.
+- **Cost:** soldiers hold fire about 3,200 times a game. Median game
+  length under a full 48-game batch rose from 28.6s (05) to 34.6s, as
+  soldiers spend ticks side-stepping for a clear shot.
