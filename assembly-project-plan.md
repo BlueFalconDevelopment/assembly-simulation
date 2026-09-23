@@ -1,26 +1,30 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-21) — read this first when picking the project back up
+## Status (as of 2026-09-23) — read this first when picking the project back up
 
-**Done: Stage 0 through Stage 6b.** Only **Stage 6c (scale to 50v50)** is left.
+**Done: every stage, 0 through 6c.** The capstone runs at 50 vs 50, verified fair over 96 headless games (46–50), with no stalls or crashes.
 
-- **Repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, pushed and up to date)
-- **Local path:** `~/Claude/Assembly_Simulation/`, one subdirectory per stage (`stage1/`, `stage2/`, ... `stage6a/`, `stage6b/`), each with its own `Makefile` and `README.md`. `make` in any stage directory builds every `.asm` file in it into `build/`.
-- **Each stage's README.md is the real changelog** — read those before re-reading this file's roadmap. They document what each numbered file adds, plus (from Stage 6a onward) real bugs found during verification and how they were fixed. `stage6b/README.md` in particular documents five bugs found while building the capstone's obstacle/line-of-sight logic — worth reading before writing any more `update_soldiers` code, since a couple of those bugs are the kind that are easy to reintroduce by accident (see "traps to avoid" below).
-- **Extensive session walkthrough** (commands, code, the full bug-hunting narrative) written up in `~/Claude/tech-blog/newPOSTS/` for a future blog post — good background reading to re-orient on how this was built, not just what was built.
+- **Repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public)
+- **Local path:** `~/Claude/Assembly_Simulation/`, one subdirectory per stage (`stage1/`, `stage2/`, ... `stage6b/`, `stage6c/`), each with its own `Makefile` and `README.md`. `make` in any stage directory builds every `.asm` file in it into `build/`.
+- **Each stage's README.md is the real changelog.** Read those before re-reading this file's roadmap. They document what each numbered file adds and, from Stage 6a on, the real bugs found during verification and how they were fixed. `stage6b/README.md` and `stage6c/README.md` together cover seven bugs in the capstone logic. Worth reading before touching `update_soldiers` again.
+- **`stage6c/batch.sh N [binary]`** runs N headless games and tallies wins/stuck/crashed. It works on any stage's binary. Use it for any fairness check (see traps below).
+- **Extensive session walkthrough** (Stages 0–6b) in `~/Claude/tech-blog/newPOSTS/` for a future blog post. 6c isn't written up there yet; `stage6c/README.md` has the whole story.
 
-### To pick 6c back up
+### Where to go from here (optional, nothing required)
 
-1. `cd ~/Claude/Assembly_Simulation/stage6b && make && ./build/02_line_of_sight` — confirm it still builds and runs (soldiers dodge the wall, ranged weapons respect line of sight, fight resolves in ~10-15s).
-2. Copy `stage6b/02_line_of_sight.asm` as the starting point for `stage6c/01_scale_up.asm` (it already has the full feature set: soldiers, pickups, obstacles, line of sight).
-3. Bump `NUM_PER_TEAM` from 8 toward 50 and rebuild. Per the performance note below, this should be a non-issue computationally — the real work is making sure spawn geometry, obstacle placement, and pickup count still make sense at that scale (e.g. more pickups will likely be needed for 100 soldiers than the current 4 fixed + 4 drop slots).
-4. **Test with many repeated runs, not one.** Every real bug found in Stage 6a/6b was invisible in a single playthrough — see "traps to avoid" below.
+The roadmap is complete. Natural next steps, roughly in order of payoff:
+1. Seed `srand` with something finer than `time(NULL)` (e.g. `SDL_GetPerformanceCounter`), so `batch.sh` can launch games all at once instead of one per second.
+2. Soldier-vs-soldier collision. Crowds stack into single squares at 50v50. This touches the side-step logic, where most of the capstone's bugs lived, so batch-test it.
+3. Swap libc `rand()` for a hand-rolled xorshift (the "later swap-in" the design section mentions).
+4. Write up 6c for the blog post.
 
 ### Traps to avoid (hard-won this session)
 
 - **A single test run proves nothing about fairness.** Two separate real bugs (a missing `call rand` that silently un-fixed an earlier turn-order bias, and a pickup-layout symmetry mismatch) each produced *deterministic-looking* one-sided win rates (24 of 24 games, in one case) that were invisible until running 10+ games in a row and counting. If you change spawn positions, pickup positions, or anything in `update_soldiers`'s processing order, re-run a batch of 10-20 games and check the win split before trusting it.
 - **Sampling once a second can hide an infinite loop.** The nastiest bug this session (a soldier stuck oscillating between two positions forever, `y=0 -> y=2 -> y=0 -> ...`) looked like a plain freeze when sampled every 60 ticks, and only became obvious tracing every single tick. If something looks "stuck," trace every tick for a short window before concluding it's just slow.
 - **A raw `syscall` clobbers `rcx` and `r11`.** Used more than once this session for quick debug `write()` prints stuffed into the middle of existing code — if `r11` (or `rcx`) is holding something you still need afterward, save/restore it around the syscall or you'll get a very confusing crash that looks unrelated to the actual change.
+- **"Symmetric" has to mean symmetric under the mirror, in every rule, not just in the spawn data.** 6c's big bias (9–39) came from a movement rule (`.try_horizontal` always tried −x first), which is "the same for both teams" in code but means *toward the enemy* for one team and *away* for the other. Quick test: swap which side each team spawns on and batch again. If the bias follows the side rather than the team, look at map/movement rules, not processing order.
+- **Batch runs need distinct seeds.** `srand(time(NULL))` has one-second resolution, so games launched in the same second play the *identical* game. `batch.sh`'s first version reported 16–0 twice from this. The giveaway was every game having the exact same duration.
 - **`gcc -no-pie` is required** when linking anything that calls SDL2 (or any extern C function) from hand-written asm using plain `call func` — without it you get `relocation ... can not be used when making a PIE object`. Already baked into every stage's Makefile from stage2 onward; just don't drop it if writing a new one from scratch.
 
 ## Why
@@ -120,11 +124,12 @@ sudo apt install -y nasm gdb build-essential libsdl2-dev
 - [x] Line of sight for ranged weapons: reuses the line-stepping logic from Stage 3 (`line_blocked`) — walks the line from shooter to target, checks for obstacle cells in the way
 - Five real bugs found and fixed during verification, all documented in `stage6b/README.md` — worth reading in full before extending this code further.
 
-**6c. Scale up** — not started, the only remaining item
-- [ ] Bump the agent array size to 50+ vs 50+
-- [ ] Confirm the same logic (no algorithm changes, just loop bounds) still holds together
-- [ ] Will likely need more than 4 fixed + 4 drop-slot pickups at this scale — worth reconsidering pickup count/placement, not just soldier count
-- [ ] Re-verify fairness (win-rate distribution across repeated runs) and crash-safety at the new scale, same discipline as 6a/6b — don't assume what held at 8v8 automatically holds at 50v50
+**6c. Scale up** ✅ done — `stage6c/` (`01_scale_up`, plus `batch.sh`)
+- [x] Bump the agent array size to 50+ vs 50+ (50 per team, 5×10 spawn grid per side, team 1 computed as the mirror of team 0)
+- [x] Confirm the same logic (no algorithm changes, just loop bounds) still holds together. The loops held. One movement rule (horizontal side-step preference) had to become team-relative, see below.
+- [x] Pickup count/placement reconsidered: 16 pickups (8 per side from a table, mirrored in code). `MAX_PICKUPS` = 16 exactly, because weapons are conserved and extra drop slots can never be used.
+- [x] Re-verified fairness and crash-safety at scale: 96 headless games, 46–50, 0 stuck, 0 crashed, 7.7–13.6s per game
+- Two real fairness bugs found by batching (`stage6c/README.md`): the horizontal side-step always preferred −x (toward the enemy for team 1, away for team 0), giving a 9–39 bias at 50v50 that 8v8 never exposed; and pickups mirrored by their own size rather than the soldier's, leaving team 1's corner-to-corner distances 6px shorter.
 
 **Performance note:** even at 100 total soldiers, an O(n²) nearest-enemy scan is trivial for modern hardware in hand-written assembly — this scale is not a performance problem. The real risk is debugging complexity, which is why 6a comes before 6c rather than the other way around.
 
@@ -139,4 +144,4 @@ sudo apt install -y nasm gdb build-essential libsdl2-dev
 - Stage 0–2: a weekend or two of steady effort
 - Stage 3 onward: the real learning curve — a multi-week arc to the capstone, not a sprint
 - It's normal for Stage 1 to take longer than it looks like it should
-- 6c (the 50+ vs 50+ scale-up) is a stretch goal — don't worry about it until 6a and 6b are solid
+- 6c (the 50+ vs 50+ scale-up) was the stretch goal. Done 2026-09-23.
