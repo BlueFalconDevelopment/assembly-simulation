@@ -38,7 +38,7 @@
 1. **Smarter hold-fire repositioning:** step back, or retarget an enemy with a clear line, instead of only side-stepping.
 2. **Push the soldier count** using headless mode (done in 7.08). `first_in_line` (every box × every point) will be the first hotspot.
 3. Weapons scattering a little when dropped on death.
-4. A Part 5 blog post covering 7.09–7.11 (pathfinding, SEED replay, the pickup deadlock, traffic, the scoreboard). Draft in `newPOSTS/`, then `bare-metal-deathmatch-5.mdx`.
+4. **Publish Part 5** (7.09–7.11). The draft is written: `newPOSTS/Learning x86-64 Assembly Part 5 - Pathfinding, Traffic, and a Scoreboard.md` (uncommitted), with the video embed line at the top. Not published yet because the Netlify credits ran out. Adapt it to `bare-metal-deathmatch-5.mdx` in house style when credits are back.
 
 ### Traps to avoid (hard-won)
 
