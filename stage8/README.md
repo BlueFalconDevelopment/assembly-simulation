@@ -6,8 +6,9 @@ pre-drawn map. Stage 8 is about the look, one drawing-only step at a
 time, each proven not to change the game (same seed → byte-identical
 `soldiers`, `pickups`, `rng_state` and `ticks` as the step before).
 
-Planned: soldier sprites, ground effects (blood, casings, a death
-animation), vehicles and props, then day and night. Stage 9 is
+Done so far: soldier sprites (8.01), detailed objects (8.02), props
+and shadows (8.03). Next: ground effects (blood, casings, a death
+animation) as 8.04, then day and night as 8.05. Stage 9 is
 scale: more soldiers, more gangs, a bigger or scrolling city.
 
 ## Build
@@ -118,3 +119,54 @@ backwards means one copy of the art serves all four directions.
 Frames from gdb show the police car driving east through the fight
 past a shotgun pickup, and the loose tan dog chasing a Crip across
 the grass.
+
+## `03_props.asm` — props and shadows
+
+The neighborhood gets depth and clutter. Light comes from the top left,
+so everything casts a shadow down and to the right.
+
+**The background is three generated layers now,** drawn once by
+`render_background`:
+
+1. **Ground:** grass with 2,600 speckles (on grass only), sidewalks
+   with joints every 20 px, asphalt with 1,400 grains, lot stall
+   lines, lane dashes, crosswalks, lobby floors.
+2. **Shadows:** rectangles that *darken* what's already there
+   (`shade_rect`). Buildings (7 px), complex walls (4), cars and
+   dumpsters (3), fences (2), and the exact shapes of trees (5),
+   bushes (3) and lamp heads (4). They come between ground and
+   objects, so nothing darkens itself.
+3. **Objects:** roofs with grain and AC units (fan grilles), row
+   houses with chimneys, the cars, dumpsters (lids, hinge, handles,
+   wheels, rust), a chain-link fence round the parking lot and
+   wooden rails elsewhere, 15 trees with leafy canopies, 8 bushes,
+   and 21 streetlights along the sidewalks.
+
+That's about 11,700 rectangles, still drawn once per game. The
+streetlight positions are written out as `street_lamps` for the
+night lighting in 8.05. The prop art (tree, bush, dumpster, AC unit,
+lamp) is in `gen_sprites.py`. The layout, and a new check that every
+tree and bush is on open ground and every lamp is on a sidewalk and
+off the road, are in `gen_neighborhood.py`. The check caught a bush
+on the avenue's sidewalk. The speckles come from a fixed seed, so
+every build is the same.
+
+**`shade_rect`** darkens a rectangle to 5/8 brightness, all three
+channels at once: `(p >> 1) & 0x7F7F7F` is half of each, and
+`(p >> 3) & 0x1F1F1F` an eighth. The masks drop the bits that slide in
+from the channel above. Alpha is put back to 0xFF.
+
+**Moving shadows:** `draw_moving_shadows` runs before any sprite is
+drawn, so a shadow never darkens a neighbour. Each visible soldier
+gets a small oval at its feet (7, 11, 11, 7 px wide rows), and there
+are shadows for the walker, the dog, and the police car (its whole
+shape, offset 3). The first version drew a plain 11×4 box, which
+looked boxy. It also drew a shadow in the "off" half of a
+respawning soldier's protection blink, which left brown dashes on
+the lobby floor with no soldier above them. Now the shadow blinks
+with the soldier.
+
+**Verification:** seeds 4242 and 77 ended byte-identical to 8.02, on
+the final binary. Frames from gdb show the fight on the avenue, each
+figure with its shadow, with streetlights, a bush and the parking lot
+behind.

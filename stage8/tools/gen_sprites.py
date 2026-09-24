@@ -364,6 +364,115 @@ def object_blocks():
     ]
 
 
+# ---------------------------------------------------------------------
+# 8.03: props, drawn into the background by gen_neighborhood.py.
+# ---------------------------------------------------------------------
+
+# A tree canopy from above, 22x22: dark edge, leaves, sunlit clumps.
+#   O edge   L leaves   l light leaves   d dark leaves
+TREE_LETTERS = ".OLld"
+TREE_ART = """
+........OOOOOO........
+......OOLLLLLLOO......
+.....OLllLLLLLLLO.....
+....OLllllLLLdLLLO....
+...OLLlllLLLLLLLLLO...
+..OLLLllLLLLdLLLLLLO..
+..OLLLLLLLLLLLLllLLO..
+.OLdLLLLLLllLLlllLLLO.
+.OLLLLLLLlllLLLlLLLdO.
+OLLLLlLLLLllLLLLLLLLLO
+OLLLlllLLLLLLLLdLLLLLO
+OLLLLlLLLLLLLLLLLLLLLO
+OLLLLLLLLdLLLLlllLLLdO
+OLLdLLLLLLLLLLLlLLLLLO
+.OLLLLLllLLLLLLLLLLLO.
+.OLLLLlllLLLLdLLLLLdO.
+..OLLLLlLLLLLLLLLLdO..
+..OLLLLLLLLLllLLLddO..
+...OLLdLLLLLlLLLLdO...
+....OLLLLLLLLLLddO....
+.....OOLLLLLLdddO.....
+.......OOOOOOOO.......
+"""
+
+# A bush, 10x10, the same letters.
+BUSH_ART = """
+...OOOO...
+..OlLLLO..
+.OllLLdLO.
+OLlLLLLLdO
+OLLLLdLLdO
+OLLLLLLLdO
+.OLLdLLddO
+.OLLLLLdO.
+..OOddOO..
+....OO....
+"""
+
+# A dumpster, 26x16, lid seen from above.
+#   G body   g body shadow   H hinge   h handle   W wheel   R rust
+DUMPSTER_LETTERS = ".GgHhWR"
+DUMPSTER_ART = """
+.W......................W.
+gggggggggggggggggggggggggg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGRRGGGGGGg
+gGGhhhGGGGGGgGGGGGRGGhhhGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGRGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gGGGGGGGGGGGgGGGGGGGGGGGGg
+gHHHHHHHHHHHHHHHHHHHHHHHHg
+gggggggggggggggggggggggggg
+.W......................W.
+..........................
+"""
+
+# A rooftop air conditioner, 12x10: a box with a round fan grille.
+#   B box   b box edge   F fan   f fan hub
+AC_LETTERS = ".BbFf"
+AC_ART = """
+bbbbbbbbbbbb
+bBBBBBBBBBBb
+bBBBFFFFBBBb
+bBBFFFFFFBBb
+bBBFFffFFBBb
+bBBFFffFFBBb
+bBBFFFFFFBBb
+bBBBFFFFBBBb
+bBBBBBBBBBBb
+bbbbbbbbbbbb
+"""
+
+# A streetlight from above, 8x8: the lamp head on its arm.
+#   P pole   A arm   H lamp housing   G lamp glass
+LIGHT_LETTERS = ".PAHG"
+LIGHT_ART = """
+..HHHH..
+.HGGGGH.
+.HGGGGH.
+..HHHH..
+...AA...
+...AA...
+..PPPP..
+..PPPP..
+"""
+
+
+def prop_grids():
+    return {
+        'tree': art_grid(TREE_ART, TREE_LETTERS, 22, 22),
+        'bush': art_grid(BUSH_ART, TREE_LETTERS, 10, 10),
+        'dumpster': art_grid(DUMPSTER_ART, DUMPSTER_LETTERS, 26, 16),
+        'ac': art_grid(AC_ART, AC_LETTERS, 12, 10),
+        'light': art_grid(LIGHT_ART, LIGHT_LETTERS, 8, 8),
+    }
+
+
 def grid(art):
     rows = [r for r in art.strip('\n').split('\n')]
     assert len(rows) == 16, f"{len(rows)} rows"
