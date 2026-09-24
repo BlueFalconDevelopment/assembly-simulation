@@ -5,6 +5,12 @@
 #   STAGGER=0 ./batch.sh ...    # no 1s gap between launches (03_xorshift on)
 #   JOBS=8 ./batch.sh ...       # games running at once (default 4)
 #
+# Every game gets HEADLESS=1. From 08_headless on, that runs the game
+# with no window and no frame cap: a whole game in well under a second
+# of one core, ending with a win line or a "Stalemate" line at
+# MAX_TICKS (counted as stuck below). Older binaries ignore it and run
+# at 60 fps on the dummy driver as before.
+#
 # At most JOBS games run at a time, at low priority (nice). Running a
 # whole 48-game batch at once -- or two batches side by side, 96 games
 # -- swamps the desktop, so a batch now takes minutes, not seconds.
@@ -29,7 +35,7 @@ run_one() {
     local start end line tmp pid
     tmp=$(mktemp)
     start=$(date +%s.%N)
-    SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software \
+    HEADLESS=1 SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software \
         nice -n 10 timeout "$limit" "$bin" > "$tmp" &
     pid=$!
     # the win line is the only thing the game ever prints; stop it there
@@ -63,7 +69,13 @@ for i in $(seq "$games"); do
     while [ "$(jobs -rp | wc -l)" -ge "$max_jobs" ]; do wait -n; done
     run_one &
     [ "$stagger" != 0 ] && [ "$i" -lt "$games" ] && sleep 1.05
-done | tee /dev/stderr | {
+done | while read -r l; do
+    # copy each game's line to stderr. Not `tee /dev/stderr`: that
+    # reopens stderr, and if it's a file, truncates it (so appending
+    # several batches to one log kept only the last one)
+    printf '%s\n' "$l" >&2
+    printf '%s\n' "$l"
+done | {
     t0=0; t1=0; stuck=0; crash=0
     while read -r l; do
         case "$l" in

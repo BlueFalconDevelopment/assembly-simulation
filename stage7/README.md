@@ -446,3 +446,65 @@ flow field on a grid) is what it would take to bring back mazes.
   line.
 - **Game length:** the longest of the 720 games took 73s, well short
   of the 180s timeout.
+
+## `08_headless.asm` — headless mode
+
+`HEADLESS=1` runs a game with no window: `main` never calls SDL, and
+runs `update_soldiers` and `check_win` back to back with no drawing
+and no 60 fps frame cap. It prints the win line and exits. The win
+line now ends with the game's length in ticks (one tick = one frame
+in a window):
+
+```
+Team 0 (blue) wins on Pillars! (friendly fire: 0 hits, 0 kills; held fire 1673 times; 952 ticks)
+```
+
+A headless game that reaches `MAX_TICKS` (30,000, over 8 minutes at
+60 fps) stops with a `Stalemate on <arena>! (...)` line instead.
+`batch.sh` counts that as stuck, so it no longer has to guess from
+wall-clock time. The windowed game has no tick limit.
+
+**Why:** batches used to run every game at 60 fps on SDL's dummy
+driver, still drawing and copying all 800×600 pixels every frame.
+Running a whole batch at once, or two side by side, swamped the
+desktop. A headless game takes about **0.16s** of one core instead of
+20–50s. A 48-game batch (4 at a time) takes **2.7s** instead of
+about 6 minutes.
+
+**Same game:** rendering was always a pure function of the game
+state (04 proved the effects don't change the fight). Checked
+anyway, with the fixed-seed gdb recipe stopping at `print_result`:
+for three seeds on Divide, Crossroads and Outposts, headless and
+windowed runs ended with byte-identical `soldiers`, `pickups`,
+`rng_state` and `ticks`.
+
+**`batch.sh` changes:**
+- It sets `HEADLESS=1` for every game. Binaries before 08 ignore it
+  and run as before.
+- It runs at most `JOBS` games at once (default 4, under `nice`).
+- **Bug fix:** it copied each game's line to stderr with
+  `tee /dev/stderr`. When stderr is a file, `tee` reopens it and
+  truncates it, so appending several batches to one log
+  (`2>>log`) kept only the last batch. It now writes to stderr
+  directly.
+
+### What the extra speed showed: rare stalemates
+
+480 games per arena (10 batches of 48, 2,400 games, about 2 minutes):
+
+| Arena | Blue–red | Stalemates | Median ticks | 99th pct |
+|---|---|---|---|---|
+| Divide | 241–239 | 0 | 1,483 | 2,077 |
+| Pillars | 243–232 | 5 | 991 | 4,853 |
+| Crossroads | 254–222 | 4 | 1,042 | 4,703 |
+| Trenches | 236–244 | 0 | 1,096 | 1,724 |
+| Outposts | 251–225 | 4 | 934 | 9,732 |
+| **Total** | **1,225–1,162** | **13** | | |
+
+Fair (1,225–1,162 is about 1.3 standard deviations from even), 0
+crashed. But 13 games in 2,400 (0.5%) on Pillars, Crossroads and
+Outposts ran all 30,000 ticks. 07's 48-game batches with a 180s
+(about 10,800-tick) timeout saw only a couple of these and reported
+the rest as clean. This is the slow endgame wandering described in
+07. Pathfinding is the fix, and headless batches are now fast
+enough to measure it properly.
