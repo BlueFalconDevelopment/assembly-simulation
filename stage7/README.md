@@ -626,3 +626,63 @@ apart, each blocking the other's step, and the knife soldiers behind
 them were funnelled into the same corner. The flow field routes
 around walls, not around other soldiers. It's 1 game in 1,440 on the
 hardest map, so it stays documented for now.
+
+## `10_traffic.asm` — steering around other soldiers
+
+09's flow field routes around walls but not around soldiers. The one
+stalemate left in 3,840 games (Zigzag, `SEED=0xc0700c12d9c1b47d`)
+replayed as a jam at the lower end of the first wall. Traced one
+`flow_waypoint` call at a time:
+
+- Soldier 11 wanted to go down-right and soldier 39 up-right, 15px
+  apart. Each one's step was blocked by the other.
+- 39 had a free alternative, one cell straight right, just as close to
+  the enemy. But `flow_waypoint` only ever returned the single closest
+  cell, so a blocked step went to the old sticky side-step.
+- 11's side-step preference was "back", so it bounced between two
+  cells every tick: forward into the jam, blocked, back, forward.
+
+**Fix:** `flow_waypoint` now works in two passes.
+
+1. Collect every neighbouring cell (of the 8) that is walkable and
+   strictly closer than the soldier's own cell, with the same
+   diagonal rule as before.
+2. Try them closest first, and take the first whose next step (the
+   same `MOVE_SPEED`-clamped step `.clear_step` will take) isn't
+   blocked by another soldier (`is_spot_blocked`). If every one is
+   blocked, return the closest anyway, and `.clear_step`'s usual
+   fallbacks take over.
+
+Ties in both passes still go in `flow_dirs` order with dx flipped for
+team 1, "forward" first, so both teams follow the same rule under the
+mirror. Only strictly closer cells are candidates, so a soldier can
+never step back and forth between two equally good cells.
+
+The function now makes calls, so its state moved from registers to a
+stack frame: 8 candidate slots plus the soldier's index and position.
+Five pushes plus 80 bytes of locals keeps `rsp` 16-byte aligned for
+the calls.
+
+### Verification
+
+| Arena | Games | Blue–red | Stalemates | Median ticks | Max ticks |
+|---|---|---|---|---|---|
+| Divide | 480 | 243–237 | 0 | 999 | 1,868 |
+| Pillars | 480 | 242–238 | 0 | 711 | 1,238 |
+| Crossroads | 480 | 256–224 | 0 | 830 | 1,392 |
+| Trenches | 480 | 246–234 | 0 | 828 | 1,702 |
+| Outposts | 480 | 219–261 | 0 | 718 | 1,247 |
+| Zigzag | 1,440 | 721–719 | 0 | 1,756 | 2,732 |
+| **Total** | **3,840** | **1,927–1,913** | **0** | | |
+
+Outposts' 219–261 is about 1.9 standard deviations, unremarkable
+across six arenas. It was rechecked anyway, as this project does:
+a fresh 2,400 games came out **1,188–1,212**, also 0 stalemates. So
+10 has run **6,240 games without a single stalemate**, and every game
+finished within 2,732 ticks (about 46 seconds at 60 fps). Zigzag,
+the layout that stalemated almost every game in 07, now has a median
+of 1,756 ticks (09: 2,100, with a stalemate and a 99th percentile of
+3,030). 0 crashed, 0 friendly fire.
+
+Cost: a Zigzag game takes about 0.27s headless. Pass 2 only runs for
+soldiers whose straight line is blocked by a wall.
