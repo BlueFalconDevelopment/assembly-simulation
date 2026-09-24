@@ -49,7 +49,7 @@ sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
 cd assembly-simulation/stage7
 make
-./build/10_traffic           # random arena; ARENA=0..5 picks one
+./build/11_scoreboard        # random arena; ARENA=0..5 picks one
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
@@ -98,6 +98,7 @@ In `stage7`, each numbered file is the previous one plus one change:
 | `08_headless` | `HEADLESS=1` runs a whole game in about 0.16s with no window, for fast batches |
 | `09_pathfinding` | Flow-field pathfinding around walls; `SEED=n` replays a game; Zigzag maze arena |
 | `10_traffic` | Pathfinding also steers around other soldiers: 0 stalemates in 6,240 games |
+| `11_scoreboard` | A scoreboard under the field in a hand-made 5×7 pixel font |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

@@ -1,0 +1,3960 @@
+; ============================================================
+; 11 — Scoreboard
+;
+; 10_traffic.asm plus a scoreboard in a 24px strip under the field:
+;
+;   BLUE 37            ZIGZAG   0:11            RED 39
+;
+; living soldiers per team, the arena and the game clock (ticks / 60),
+; and "RED WINS" / "BLUE WINS" in the middle once it's over. The window
+; grows to 800 x 624 (WINDOW_H); the field is still SCREEN_H = 600, so
+; nothing in the game itself moves.
+;
+; The text is a hand-made 5x7 pixel font (`font` in .data): one byte
+; per row, bit 4 the leftmost pixel, written in binary so each glyph
+; reads like the letter it draws. draw_text turns every set bit into
+; a 2x2 fill_rect. A GLYPH macro checks at build time that the table
+; stays in ASCII order.
+;
+; Drawing only, like 04's effects: draw_hud reads the soldiers, ticks
+; and game_over and writes nothing but pixels. Checked the same way:
+; with the same seed, 10 and 11 end with byte-identical soldiers,
+; pickups, rng_state and ticks.
+; ============================================================
+default rel
+global main
+
+extern SDL_Init
+extern SDL_CreateWindow
+extern SDL_CreateRenderer
+extern SDL_CreateTexture
+extern SDL_LockTexture
+extern SDL_UnlockTexture
+extern SDL_RenderCopy
+extern SDL_RenderPresent
+extern SDL_PollEvent
+extern SDL_GetTicks
+extern SDL_Delay
+extern SDL_DestroyTexture
+extern SDL_DestroyRenderer
+extern SDL_DestroyWindow
+extern SDL_Quit
+extern getenv
+extern atoi
+extern strtoull
+
+SDL_INIT_VIDEO              equ 0x00000020
+SDL_WINDOWPOS_UNDEFINED     equ 0x1FFF0000
+SDL_WINDOW_SHOWN            equ 0x00000004
+SDL_RENDERER_ACCELERATED    equ 0x00000002
+SDL_QUIT_EVENT               equ 0x100
+FRAME_BUDGET_MS              equ 16
+SDL_PIXELFORMAT_RGBA32       equ 0x16762004
+SDL_TEXTUREACCESS_STREAMING  equ 1
+
+SCREEN_W equ 800
+SCREEN_H equ 600              ; the battlefield
+HUD_H    equ 24               ; scoreboard strip under it
+WINDOW_H equ SCREEN_H + HUD_H
+
+; ---- scoreboard font (see `font` in .data) ----
+FONT_FIRST  equ 32            ; ' '
+FONT_LAST   equ 90            ; 'Z'
+FONT_ROWS   equ 7
+FONT_COLS   equ 5
+FONT_SCALE  equ 2             ; each font pixel is a 2x2 block
+CHAR_ADV    equ (FONT_COLS + 1) * FONT_SCALE     ; one column of spacing
+HUD_TEXT_Y  equ SCREEN_H + (HUD_H - FONT_ROWS * FONT_SCALE) / 2
+HUD_MARGIN  equ 8
+OUR_PITCH equ SCREEN_W * 4
+
+NUM_PER_TEAM   equ 50
+; Team 0 spawns anywhere with its box's corner in this rectangle; team 1
+; in its mirror. The right edge keeps the box (x..x+16) left of x=200,
+; where the pickup zone starts.
+SPAWN_MIN_X    equ 16
+SPAWN_MAX_X    equ 184
+SPAWN_MIN_Y    equ 16
+SPAWN_MAX_Y    equ SCREEN_H - SOLDIER_SIZE - 16
+; Minimum corner-to-corner spacing between two spawns on each axis.
+; SOLDIER_SIZE would only prevent overlap; the extra 8px keeps
+; soldiers from starting glued together.
+SPAWN_GAP      equ SOLDIER_SIZE + 8
+TOTAL_SOLDIERS equ NUM_PER_TEAM * 2
+SOLDIER_SIZE   equ 16
+MOVE_SPEED     equ 2
+CONTACT_RANGE  equ 20
+
+KNIFE_DAMAGE          equ 34
+KNIFE_HIT_CHANCE      equ 70
+KNIFE_COOLDOWN_TICKS  equ 30
+
+PISTOL_RANGE          equ 250
+PISTOL_DAMAGE         equ 20
+PISTOL_HIT_CHANCE     equ 60
+PISTOL_COOLDOWN_TICKS equ 20
+
+SHOTGUN_RANGE         equ 180
+SHOTGUN_CLOSE_RANGE   equ 80
+SHOTGUN_CLOSE_DAMAGE  equ 50
+SHOTGUN_CLOSE_HIT     equ 85
+SHOTGUN_FAR_DAMAGE    equ 25
+SHOTGUN_FAR_HIT       equ 40
+SHOTGUN_COOLDOWN_TICKS equ 40
+
+WEAPON_KNIFE   equ 0
+WEAPON_PISTOL  equ 1
+WEAPON_SHOTGUN equ 2
+
+STATE_SEEK_ENEMY equ 1
+
+PICKUPS_PER_SIDE equ 8
+PICKUP_JITTER    equ 30      ; each pickup lands up to this far from its
+                             ; table spot, on each axis
+; Weapons are conserved: every weapon is either lying in exactly one
+; active pickup slot or held by exactly one living soldier, and a drop
+; only happens when its holder dies. So the number of weapons on the
+; ground can never exceed the number spawned at the start -- one slot
+; per starting pickup is enough, with no spare "drop slots" needed.
+MAX_PICKUPS   equ PICKUPS_PER_SIDE * 2
+PICKUP_SIZE   equ 10
+; A soldier grabs a pickup when its corner is within this of the
+; pickup's. It was 15, under one body width, so the grabber had to
+; stand almost ON the spot. A soldier holding a gun (who never picks
+; anything up) standing there, boxed in by knife-wielding teammates who
+; all wanted it, was a permanent stalemate (09's README). At
+; SOLDIER_SIZE + 8, anyone touching that soldier can reach it.
+PICKUP_RADIUS equ SOLDIER_SIZE + 8
+
+; ---- pathfinding grid (see header) ----
+CELL        equ 9
+GRID_W      equ (SCREEN_W - SOLDIER_SIZE + CELL - 1) / CELL + 1   ; 89
+GRID_H      equ (SCREEN_H - SOLDIER_SIZE + CELL - 1) / CELL + 1   ; 66
+GRID_CELLS  equ GRID_W * GRID_H
+UNREACHED   equ 0xFFFF
+%if (SCREEN_W - SOLDIER_SIZE + CELL - 1) % CELL != 0
+    %error "grid cells don't mirror onto grid cells: need (784 + CELL-1) % CELL == 0"
+%endif
+
+MAX_TICKS equ 30000          ; headless only: 8+ minutes at 60 fps, vs
+                             ; ~2,000-4,000 for a normal game
+MAX_OBSTACLES equ 16         ; after mirroring; spawn_obstacles checks
+
+; ---- attack effects (drawing only, see header) ----
+MAX_EFFECTS    equ 128      ; ring buffer; must be a power of two. One
+                            ; attack per soldier per cooldown (>= 20
+                            ; ticks) and effects live < 20 frames, so
+                            ; at most 100 are ever alive at once
+FX_KNIFE       equ WEAPON_KNIFE + 1     ; Effect.type = weapon + 1,
+FX_PISTOL      equ WEAPON_PISTOL + 1    ; 0 = free slot
+FX_SHOTGUN     equ WEAPON_SHOTGUN + 1
+BULLET_TRAVEL  equ 8        ; frames for a tracer to reach its target
+TRACER_TAIL    equ 2        ; tracer length, in 1/BULLET_TRAVEL of the path
+IMPACT_FRAMES  equ 6        ; spark after arrival
+BULLET_LIFE    equ BULLET_TRAVEL + IMPACT_FRAMES
+KNIFE_PEAK     equ 5        ; frames to full extension, then same back
+KNIFE_LIFE     equ KNIFE_PEAK * 2
+KNIFE_BLADE    equ 3        ; blade length, in 1/KNIFE_PEAK of the distance
+FLASH_FRAMES   equ 6        ; target drawn white this long on a hit
+PELLET_SPREAD  equ 8        ; px between shotgun pellets at the target
+MISS_OFFSET    equ 3        ; a miss lands this many PELLET_SPREADs sideways
+
+struc FrameBuffer
+    .pixels: resq 1
+    .pitch:  resd 1
+    .w:      resd 1
+    .h:      resd 1
+endstruc
+
+struc Soldier
+    .x:        resd 1
+    .y:        resd 1
+    .health:   resd 1
+    .team:     resd 1
+    .weapon:   resd 1
+    .state:    resd 1
+    .target:   resd 1
+    .cooldown: resd 1
+    .avoid_dir: resd 1   ; 0 = prefer up (vertical side-step) or
+                            ; forward/toward the enemy (horizontal) first
+                            ; when blocked, 1 = prefer down / back --
+                            ; sticky per-soldier,
+                            ; set to whichever direction last actually
+                            ; worked, so a soldier does not flip-flop back
+                            ; and forth every single tick between "blocked"
+                            ; and "just barely clear" at a boundary
+endstruc
+
+struc Pickup
+    .x:      resd 1
+    .y:      resd 1
+    .type:   resd 1
+    .active: resd 1
+endstruc
+
+struc Effect
+    .type:   resd 1      ; 0 = free, else FX_*
+    .age:    resd 1      ; frames since the attack
+    .target: resd 1      ; soldier index, for the hit flash
+    .hit:    resd 1      ; 1 = the attack hit
+    .x0:     resd 1      ; attacker centre
+    .y0:     resd 1
+    .x1:     resd 1      ; aim point: target centre, pushed aside on a miss
+    .y1:     resd 1
+    .px:     resd 1      ; perpendicular to the shot, PELLET_SPREAD long
+    .py:     resd 1      ; (roughly -- see spawn_effect)
+endstruc
+
+struc Obstacle
+    .x: resd 1
+    .y: resd 1
+    .w: resd 1
+    .h: resd 1
+endstruc
+
+; One row of arena_table.
+struc Arena
+    .name:     resq 1      ; not 0-terminated -- see .name_len
+    .walls:    resq 1      ; left-half walls, one Obstacle each
+    .name_len: resd 1
+    .count:    resd 1      ; walls listed (before mirroring)
+endstruc
+
+; ARENA / WALL / END_ARENA build one arena's wall list and check it
+; at assembly time, so a bad layout is a build error, not a game
+; that quietly goes wrong:
+;   - a wall must be in the left half, or be its own mirror
+;     (x + w/2 = SCREEN_W/2). Anything else would mirror onto a
+;     different wall and overlap it
+;   - a wall must stay clear of the left spawn strip (box corners
+;     up to SPAWN_MAX_X, so bodies up to SPAWN_MAX_X + SOLDIER_SIZE)
+;   - the mirrored total must fit in MAX_OBSTACLES
+%macro ARENA 1
+%1_walls:
+    %assign arena_walls 0
+    %assign arena_full 0
+%endmacro
+
+%macro WALL 4   ; x, y, w, h
+    dd %1, %2, %3, %4
+    %if SCREEN_W - (%1) - (%3) == (%1)
+        %assign arena_full arena_full + 1
+    %else
+        %if (%1) + (%3) > SCREEN_W / 2
+            %error "wall crosses the centre line but isn't its own mirror"
+        %endif
+        %assign arena_full arena_full + 2
+    %endif
+    %if (%1) < SPAWN_MAX_X + SOLDIER_SIZE
+        %error "wall overlaps the spawn strip"
+    %endif
+    %assign arena_walls arena_walls + 1
+%endmacro
+
+%macro END_ARENA 1
+    %1_count equ arena_walls
+    %if arena_full > MAX_OBSTACLES
+        %error "arena has more than MAX_OBSTACLES walls after mirroring"
+    %endif
+%endmacro
+
+COLOR_FIELD  equ 0xFF50966E
+COLOR_TEAM0  equ 0xFFDC783C
+COLOR_TEAM1  equ 0xFF3C3CDC
+COLOR_PICKUP_PISTOL  equ 0xFF28D2E6
+COLOR_PICKUP_SHOTGUN equ 0xFFC83CAA
+COLOR_OBSTACLE equ 0xFF505A64   ; R=100 G=90 B=80 A=255 -- grayish-brown cover
+COLOR_BLADE    equ 0xFFF0F0F0   ; near-white
+COLOR_TRACER   equ 0xFF50E6FF   ; R=255 G=230 B=80 -- yellow
+COLOR_PELLET   equ 0xFF3CA0FF   ; R=255 G=160 B=60 -- orange
+COLOR_SPARK    equ 0xFF28DCFF   ; R=255 G=220 B=40
+COLOR_FLASH    equ 0xFFFFFFFF
+COLOR_HUD      equ 0xFF282828   ; dark grey strip
+COLOR_HUD_TEXT equ 0xFFDCDCDC   ; light grey
+
+LOCK_PIXELS_OFF equ 0
+LOCK_PITCH_OFF  equ 8
+EVENT_OFF       equ 16
+LOOP_I_OFF      equ 80
+STACK_LOCALS_SIZE equ 96
+
+section .data
+    title_prefix db "Stage 7.11 - "
+    title_prefix_len equ $ - title_prefix
+    arena_env db "ARENA", 0
+    headless_env db "HEADLESS", 0
+    seed_env db "SEED", 0
+    hex_digits db "0123456789abcdef"
+    seed_msg db "; seed "
+    seed_msg_len equ $ - seed_msg
+    show_seed dd 0            ; 1 = print_result adds the seed
+    game_seed dq 0            ; rng_state right after seeding
+    stalemate_msg db "Stalemate"
+    stalemate_msg_len equ $ - stalemate_msg
+    win_msg0 db "Team 0 (blue) wins"
+    win_msg0_len equ $ - win_msg0
+    win_msg1 db "Team 1 (red) wins"
+    win_msg1_len equ $ - win_msg1
+    on_msg db " on "
+    on_msg_len equ $ - on_msg
+    ff_msg1 db "! (friendly fire: "
+    ff_msg1_len equ $ - ff_msg1
+    ff_msg2 db " hits, "
+    ff_msg2_len equ $ - ff_msg2
+    ff_msg3 db " kills; held fire "
+    ff_msg3_len equ $ - ff_msg3
+    ff_msg4 db " times; "
+    ff_msg4_len equ $ - ff_msg4
+    ff_msg5 db " ticks"
+    ff_msg5_len equ $ - ff_msg5
+    ff_msg6 db ")", 10
+    ff_msg6_len equ $ - ff_msg6
+    ticks    dd 0             ; updates run so far
+    ff_held  dd 0
+    ff_hits  dd 0
+    ff_kills dd 0
+    game_over dd 0
+    pass_reverse dd 0
+    num_obstacles dd 0        ; walls in play, after mirroring
+    arena_idx     dd 0
+    rng_state    dq 0         ; xorshift64 state -- must never be 0
+
+    ; Left half of the pickup layout: x, y, type per entry. spawn_pickups
+    ; jitters each one by up to PICKUP_JITTER, then places it AND its
+    ; left-right mirror, so position and weapon type are still symmetric
+    ; between the teams. Two columns between the spawn area and the
+    ; wall (x 200-350 after jitter), checkerboarded pistol/shotgun so no
+    ; stretch of the field gets only one kind of weapon.
+    left_pickups:
+        dd 230,  80, WEAPON_PISTOL
+        dd 310,  80, WEAPON_SHOTGUN
+        dd 230, 220, WEAPON_SHOTGUN
+        dd 310, 220, WEAPON_PISTOL
+        dd 230, 370, WEAPON_PISTOL
+        dd 310, 370, WEAPON_SHOTGUN
+        dd 230, 510, WEAPON_SHOTGUN
+        dd 310, 510, WEAPON_PISTOL
+    LEFT_PICKUP_ENTRY equ 12      ; bytes per entry (3 dwords)
+%if ($ - left_pickups) != PICKUPS_PER_SIDE * LEFT_PICKUP_ENTRY
+    %error "left_pickups table size doesn't match PICKUPS_PER_SIDE"
+%endif
+
+    ; ---- arenas: left-half walls only (see ARENA/WALL above) ----
+    ; Pickup table spots are at x 230 and 310 (y 80, 220, 370, 510);
+    ; walls may cover them, since spawn_pickups slides a pickup out.
+    ARENA divide                  ; stage6c's wall: a gap in the middle
+        WALL 370,   0,  60, 220
+        WALL 370, 380,  60, 220
+    END_ARENA divide
+
+    ARENA pillars                 ; three columns, staggered rows
+        WALL 236,  90,  36,  36
+        WALL 236, 282,  36,  36
+        WALL 236, 474,  36,  36
+        WALL 318, 186,  36,  36
+        WALL 318, 378,  36,  36
+        WALL 382,  90,  36,  36
+        WALL 382, 282,  36,  36
+        WALL 382, 474,  36,  36
+    END_ARENA pillars
+
+    ARENA crossroads              ; corridors: x 370-430, y 225-375,
+        WALL 300,  75,  70, 150   ; and 75px lanes along top and bottom
+        WALL 300, 375,  70, 150
+    END_ARENA crossroads
+
+    ARENA trenches                ; short staggered segments: lots of
+        WALL 290,  80,  20, 110   ; cover, but every wall is short
+        WALL 290, 410,  20, 110   ; enough to side-step past quickly
+        WALL 390, 190,  20,  80
+        WALL 390, 330,  20,  80
+    END_ARENA trenches
+
+    ARENA outposts
+        WALL 250, 110,  20, 110   ; a post in front of each spawn
+        WALL 250, 380,  20, 110
+        WALL 360, 150,  80,  20   ; two bars across the middle
+        WALL 360, 430,  80,  20
+        WALL 385, 260,  30,  80   ; the centre bunker
+    END_ARENA outposts
+
+    ARENA zigzag                  ; 07's first Zigzag: open at the bottom,
+        WALL 300,   0,  24, 380   ; then the top, then the bottom. The
+        WALL 388, 220,  24, 380   ; greedy side-step never got through it
+    END_ARENA zigzag
+
+    name_divide     db "Divide"
+    name_pillars    db "Pillars"
+    name_crossroads db "Crossroads"
+    name_trenches   db "Trenches"
+    name_outposts   db "Outposts"
+    name_zigzag     db "Zigzag"
+    name_end:
+
+%macro ARENA_ROW 2   ; label, name label of the NEXT name (for the length)
+    dq name_%1, %1_walls
+    dd %2 - name_%1, %1_count
+%endmacro
+    arena_table:
+        ARENA_ROW divide,     name_pillars
+        ARENA_ROW pillars,    name_crossroads
+        ARENA_ROW crossroads, name_trenches
+        ARENA_ROW trenches,   name_outposts
+        ARENA_ROW outposts,   name_zigzag
+        ARENA_ROW zigzag,     name_end
+    NUM_ARENAS equ ($ - arena_table) / Arena_size
+
+    back_fb:
+    istruc FrameBuffer
+        at FrameBuffer.pixels, dq back_buffer
+        at FrameBuffer.pitch,  dd OUR_PITCH
+        at FrameBuffer.w,      dd SCREEN_W
+        at FrameBuffer.h,      dd WINDOW_H
+    iend
+
+    ; ---- the scoreboard font: 5x7, hand-made ----
+    ; One glyph per ASCII code from ' ' (32) to 'Z' (90), 7 bytes each,
+    ; one per row, top first. Bit 4 is the leftmost pixel, so each row
+    ; reads like the picture it draws. Codes with no glyph are blank.
+    ; GLYPH checks at build time that the table stays in ASCII order.
+%macro GLYPH 8
+    %if %1 != font_next
+        %error "font glyphs out of order"
+    %endif
+    db %2, %3, %4, %5, %6, %7, %8
+    %assign font_next font_next + 1
+%endmacro
+%macro GLYPH_BLANK 1
+    %if %1 != font_next
+        %error "font glyphs out of order"
+    %endif
+    times FONT_ROWS db 0
+    %assign font_next font_next + 1
+%endmacro
+    %assign font_next FONT_FIRST
+    font:
+    GLYPH_BLANK 32        ; ' '
+    GLYPH '!', 00100b, 00100b, 00100b, 00100b, 00100b, 00000b, 00100b
+    GLYPH_BLANK 34
+    GLYPH_BLANK 35
+    GLYPH_BLANK 36
+    GLYPH_BLANK 37
+    GLYPH_BLANK 38
+    GLYPH_BLANK 39
+    GLYPH_BLANK 40
+    GLYPH_BLANK 41
+    GLYPH_BLANK 42
+    GLYPH_BLANK 43
+    GLYPH_BLANK 44
+    GLYPH '-', 00000b, 00000b, 00000b, 11111b, 00000b, 00000b, 00000b
+    GLYPH '.', 00000b, 00000b, 00000b, 00000b, 00000b, 01100b, 01100b
+    GLYPH_BLANK 47
+    GLYPH '0', 01110b, 10001b, 10011b, 10101b, 11001b, 10001b, 01110b
+    GLYPH '1', 00100b, 01100b, 00100b, 00100b, 00100b, 00100b, 01110b
+    GLYPH '2', 01110b, 10001b, 00001b, 00010b, 00100b, 01000b, 11111b
+    GLYPH '3', 11111b, 00010b, 00100b, 00010b, 00001b, 10001b, 01110b
+    GLYPH '4', 00010b, 00110b, 01010b, 10010b, 11111b, 00010b, 00010b
+    GLYPH '5', 11111b, 10000b, 11110b, 00001b, 00001b, 10001b, 01110b
+    GLYPH '6', 00110b, 01000b, 10000b, 11110b, 10001b, 10001b, 01110b
+    GLYPH '7', 11111b, 00001b, 00010b, 00100b, 01000b, 01000b, 01000b
+    GLYPH '8', 01110b, 10001b, 10001b, 01110b, 10001b, 10001b, 01110b
+    GLYPH '9', 01110b, 10001b, 10001b, 01111b, 00001b, 00010b, 01100b
+    GLYPH ':', 00000b, 01100b, 01100b, 00000b, 01100b, 01100b, 00000b
+    GLYPH_BLANK 59
+    GLYPH_BLANK 60
+    GLYPH_BLANK 61
+    GLYPH_BLANK 62
+    GLYPH_BLANK 63
+    GLYPH_BLANK 64
+    GLYPH 'A', 01110b, 10001b, 10001b, 11111b, 10001b, 10001b, 10001b
+    GLYPH 'B', 11110b, 10001b, 10001b, 11110b, 10001b, 10001b, 11110b
+    GLYPH 'C', 01110b, 10001b, 10000b, 10000b, 10000b, 10001b, 01110b
+    GLYPH 'D', 11100b, 10010b, 10001b, 10001b, 10001b, 10010b, 11100b
+    GLYPH 'E', 11111b, 10000b, 10000b, 11110b, 10000b, 10000b, 11111b
+    GLYPH 'F', 11111b, 10000b, 10000b, 11110b, 10000b, 10000b, 10000b
+    GLYPH 'G', 01110b, 10001b, 10000b, 10111b, 10001b, 10001b, 01111b
+    GLYPH 'H', 10001b, 10001b, 10001b, 11111b, 10001b, 10001b, 10001b
+    GLYPH 'I', 01110b, 00100b, 00100b, 00100b, 00100b, 00100b, 01110b
+    GLYPH 'J', 00111b, 00010b, 00010b, 00010b, 00010b, 10010b, 01100b
+    GLYPH 'K', 10001b, 10010b, 10100b, 11000b, 10100b, 10010b, 10001b
+    GLYPH 'L', 10000b, 10000b, 10000b, 10000b, 10000b, 10000b, 11111b
+    GLYPH 'M', 10001b, 11011b, 10101b, 10101b, 10001b, 10001b, 10001b
+    GLYPH 'N', 10001b, 10001b, 11001b, 10101b, 10011b, 10001b, 10001b
+    GLYPH 'O', 01110b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b
+    GLYPH 'P', 11110b, 10001b, 10001b, 11110b, 10000b, 10000b, 10000b
+    GLYPH 'Q', 01110b, 10001b, 10001b, 10001b, 10101b, 10010b, 01101b
+    GLYPH 'R', 11110b, 10001b, 10001b, 11110b, 10100b, 10010b, 10001b
+    GLYPH 'S', 01111b, 10000b, 10000b, 01110b, 00001b, 00001b, 11110b
+    GLYPH 'T', 11111b, 00100b, 00100b, 00100b, 00100b, 00100b, 00100b
+    GLYPH 'U', 10001b, 10001b, 10001b, 10001b, 10001b, 10001b, 01110b
+    GLYPH 'V', 10001b, 10001b, 10001b, 10001b, 10001b, 01010b, 00100b
+    GLYPH 'W', 10001b, 10001b, 10001b, 10101b, 10101b, 10101b, 01010b
+    GLYPH 'X', 10001b, 10001b, 01010b, 00100b, 01010b, 10001b, 10001b
+    GLYPH 'Y', 10001b, 10001b, 10001b, 01010b, 00100b, 00100b, 00100b
+    GLYPH 'Z', 11111b, 00001b, 00010b, 00100b, 01000b, 10000b, 11111b
+    %if font_next != FONT_LAST + 1
+        %error "font table doesn't end at FONT_LAST"
+    %endif
+    hud_blue db "BLUE "
+    hud_blue_len equ $ - hud_blue
+    hud_red db "RED "
+    hud_red_len equ $ - hud_red
+    hud_wins db " WINS"
+    hud_wins_len equ $ - hud_wins
+    hud_gap db "   "
+    hud_gap_len equ $ - hud_gap
+
+    ; flow_waypoint's neighbour order: dx (times the team's forward
+    ; sign), dy. Orthogonal first, so on a tie a straight step wins
+    flow_dirs:
+        db  1,  0,   0, -1,   0,  1,  -1,  0
+        db  1, -1,   1,  1,  -1, -1,  -1,  1
+
+section .bss
+    walkable    resb GRID_CELLS         ; 1 = a soldier fits anywhere in the cell
+    field_to0   resw GRID_CELLS         ; BFS distances, UNREACHED = none
+    field_to1   resw GRID_CELLS
+    field_pk    resw GRID_CELLS
+    bfs_queue   resd GRID_CELLS         ; each cell is queued at most once
+    bfs_field   resq 1                  ; the field bfs_seed/bfs_run work on
+    bfs_tail    resd 1
+    flow_wx     resd 1                  ; flow_waypoint's answer
+    flow_wy     resd 1
+    back_buffer resb SCREEN_W * WINDOW_H * 4
+    hud_buf     resb 64                 ; one scoreboard string at a time
+    soldiers    resb TOTAL_SOLDIERS * Soldier_size
+    pickups     resb MAX_PICKUPS * Pickup_size
+    obstacles   resb MAX_OBSTACLES * Obstacle_size
+    effects     resb MAX_EFFECTS * Effect_size
+    fx_next     resd 1                  ; next ring-buffer slot to fill
+    hit_flash    resd TOTAL_SOLDIERS    ; frames left drawn white
+    death_linger resd TOTAL_SOLDIERS    ; frames a dead soldier stays drawn
+    msg_buf      resb 160               ; the win line, built by print_result
+    title_buf    resb 64                ; window title, built by build_title
+
+section .text
+main:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 8
+    sub rsp, STACK_LOCALS_SIZE
+
+    ; seed FIRST -- the spawn functions below draw random numbers
+    call rng_seed
+    call seed_from_env
+    mov rax, [rng_state]
+    mov [game_seed], rax
+
+    call choose_arena
+    call spawn_obstacles
+    call build_walkable
+    call spawn_soldiers
+    call spawn_pickups
+
+    call is_headless
+    test eax, eax
+    jz .windowed
+
+    ; ---- headless: update until someone wins or MAX_TICKS ----
+.hl_loop:
+    call update_soldiers
+    inc dword [ticks]
+    call check_win
+    test eax, eax
+    jnz .hl_won
+    cmp dword [ticks], MAX_TICKS
+    jb .hl_loop
+    mov dword [show_seed], 1       ; so the stalemate can be replayed
+    lea rsi, [stalemate_msg]
+    mov edx, stalemate_msg_len
+    call print_result
+    jmp .cleanup_none
+.hl_won:
+    call print_winner
+    jmp .cleanup_none
+
+.windowed:
+    mov edi, SDL_INIT_VIDEO
+    call SDL_Init
+    test eax, eax
+    js .cleanup_none
+
+    call build_title
+    lea rdi, [title_buf]
+    mov esi, SDL_WINDOWPOS_UNDEFINED
+    mov edx, SDL_WINDOWPOS_UNDEFINED
+    mov ecx, SCREEN_W
+    mov r8d, WINDOW_H
+    mov r9d, SDL_WINDOW_SHOWN
+    call SDL_CreateWindow
+    mov r12, rax
+    test r12, r12
+    jz .cleanup_sdl
+
+    mov rdi, r12
+    mov esi, -1
+    mov edx, SDL_RENDERER_ACCELERATED
+    call SDL_CreateRenderer
+    mov r13, rax
+    test r13, r13
+    jz .cleanup_window
+
+    mov rdi, r13
+    mov esi, SDL_PIXELFORMAT_RGBA32
+    mov edx, SDL_TEXTUREACCESS_STREAMING
+    mov ecx, SCREEN_W
+    mov r8d, WINDOW_H
+    call SDL_CreateTexture
+    mov r14, rax
+    test r14, r14
+    jz .cleanup_renderer
+
+.loop:
+    call SDL_GetTicks
+    mov ebx, eax
+
+.poll_events:
+    lea rdi, [rsp + EVENT_OFF]
+    call SDL_PollEvent
+    test eax, eax
+    jz .update
+    mov eax, [rsp + EVENT_OFF]
+    cmp eax, SDL_QUIT_EVENT
+    je .cleanup_all
+    jmp .poll_events
+
+.update:
+    cmp dword [game_over], 0
+    jne .render
+
+    call update_soldiers
+    inc dword [ticks]
+    call check_win
+    test eax, eax
+    jz .render
+    mov [game_over], eax
+    call print_winner
+
+.render:
+    lea rdi, [back_fb]
+    xor esi, esi
+    xor edx, edx
+    mov ecx, SCREEN_W
+    mov r8d, SCREEN_H
+    mov r9d, COLOR_FIELD
+    call fill_rect
+
+    ; ---- obstacles ----
+    mov dword [rsp + LOOP_I_OFF], 0
+.obstacle_draw_loop:
+    mov eax, [rsp + LOOP_I_OFF]
+    cmp eax, [num_obstacles]
+    jge .obstacle_draw_done
+
+    imul eax, Obstacle_size
+    lea r10, [obstacles]
+    add r10, rax
+
+    lea rdi, [back_fb]
+    mov esi, [r10 + Obstacle.x]
+    mov edx, [r10 + Obstacle.y]
+    mov ecx, [r10 + Obstacle.w]
+    mov r8d, [r10 + Obstacle.h]
+    mov r9d, COLOR_OBSTACLE
+    call fill_rect
+
+    mov eax, [rsp + LOOP_I_OFF]
+    inc eax
+    mov [rsp + LOOP_I_OFF], eax
+    jmp .obstacle_draw_loop
+.obstacle_draw_done:
+
+    ; ---- active weapon pickups ----
+    mov dword [rsp + LOOP_I_OFF], 0
+.pickup_draw_loop:
+    mov eax, [rsp + LOOP_I_OFF]
+    cmp eax, MAX_PICKUPS
+    jge .pickup_draw_done
+
+    imul eax, Pickup_size
+    lea r10, [pickups]
+    add r10, rax
+
+    cmp dword [r10 + Pickup.active], 0
+    je .pickup_draw_next
+
+    mov eax, [r10 + Pickup.type]
+    cmp eax, WEAPON_PISTOL
+    jne .pickup_shotgun_color
+    mov r9d, COLOR_PICKUP_PISTOL
+    jmp .pickup_have_color
+.pickup_shotgun_color:
+    mov r9d, COLOR_PICKUP_SHOTGUN
+.pickup_have_color:
+    lea rdi, [back_fb]
+    mov esi, [r10 + Pickup.x]
+    mov edx, [r10 + Pickup.y]
+    mov ecx, PICKUP_SIZE
+    mov r8d, PICKUP_SIZE
+    call fill_rect
+
+.pickup_draw_next:
+    mov eax, [rsp + LOOP_I_OFF]
+    inc eax
+    mov [rsp + LOOP_I_OFF], eax
+    jmp .pickup_draw_loop
+.pickup_draw_done:
+
+    ; ---- soldiers ----
+    mov dword [rsp + LOOP_I_OFF], 0
+.draw_loop:
+    mov eax, [rsp + LOOP_I_OFF]
+    cmp eax, TOTAL_SOLDIERS
+    jge .draw_done
+
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+
+    ; dead soldiers stay drawn while death_linger runs, so the shot
+    ; that killed them has something to land on
+    mov eax, [rsp + LOOP_I_OFF]
+    cmp dword [r10 + Soldier.health], 0
+    jg .draw_visible
+    lea rcx, [death_linger]
+    cmp dword [rcx + rax*4], 0
+    jle .draw_next
+.draw_visible:
+
+    lea rcx, [hit_flash]
+    cmp dword [rcx + rax*4], 0
+    jle .no_flash
+    mov r9d, COLOR_FLASH
+    jmp .have_color
+.no_flash:
+    mov eax, [r10 + Soldier.team]
+    test eax, eax
+    jnz .team1_color
+    mov r9d, COLOR_TEAM0
+    jmp .have_color
+.team1_color:
+    mov r9d, COLOR_TEAM1
+.have_color:
+    lea rdi, [back_fb]
+    mov esi, [r10 + Soldier.x]
+    mov edx, [r10 + Soldier.y]
+    mov ecx, SOLDIER_SIZE
+    mov r8d, SOLDIER_SIZE
+    call fill_rect
+
+.draw_next:
+    ; count down this soldier's flash and linger timers, once per frame
+    mov eax, [rsp + LOOP_I_OFF]
+    lea rcx, [hit_flash]
+    cmp dword [rcx + rax*4], 0
+    jle .flash_done
+    dec dword [rcx + rax*4]
+.flash_done:
+    lea rcx, [death_linger]
+    cmp dword [rcx + rax*4], 0
+    jle .linger_done
+    dec dword [rcx + rax*4]
+.linger_done:
+    inc eax
+    mov [rsp + LOOP_I_OFF], eax
+    jmp .draw_loop
+.draw_done:
+
+    ; ---- attack effects, on top of everything ----
+    call draw_effects
+
+    ; ---- scoreboard, last: it also covers any spark that strayed
+    ; below the field ----
+    call draw_hud
+
+    mov rdi, r14
+    xor esi, esi
+    lea rdx, [rsp + LOCK_PIXELS_OFF]
+    lea rcx, [rsp + LOCK_PITCH_OFF]
+    call SDL_LockTexture
+    test eax, eax
+    js .cleanup_all
+
+    mov r10, [rsp + LOCK_PIXELS_OFF]
+    mov r11d, [rsp + LOCK_PITCH_OFF]
+
+    xor r15d, r15d
+.blit_row_loop:
+    cmp r15d, WINDOW_H
+    jge .blit_done
+
+    lea rsi, [back_buffer]
+    mov eax, r15d
+    imul eax, OUR_PITCH
+    add rsi, rax
+
+    mov rdi, r10
+    mov eax, r15d
+    imul eax, r11d
+    add rdi, rax
+
+    mov ecx, SCREEN_W * 4
+    cld
+    rep movsb
+
+    inc r15d
+    jmp .blit_row_loop
+.blit_done:
+
+    mov rdi, r14
+    call SDL_UnlockTexture
+
+    mov rdi, r13
+    mov rsi, r14
+    xor edx, edx
+    xor ecx, ecx
+    call SDL_RenderCopy
+
+    mov rdi, r13
+    call SDL_RenderPresent
+
+    call SDL_GetTicks
+    sub eax, ebx
+    cmp eax, FRAME_BUDGET_MS
+    jge .loop
+    mov ecx, FRAME_BUDGET_MS
+    sub ecx, eax
+    mov edi, ecx
+    call SDL_Delay
+    jmp .loop
+
+.cleanup_all:
+    mov rdi, r14
+    call SDL_DestroyTexture
+.cleanup_renderer:
+    mov rdi, r13
+    call SDL_DestroyRenderer
+.cleanup_window:
+    mov rdi, r12
+    call SDL_DestroyWindow
+.cleanup_sdl:
+    call SDL_Quit
+.cleanup_none:
+    add rsp, STACK_LOCALS_SIZE
+    add rsp, 8
+    xor eax, eax
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+
+; void rng_seed(void)
+;
+; rdtsc puts the CPU's cycle counter in edx:eax. Using it raw would
+; work, but xorshift is linear: two seeds that differ in a few low bits
+; (two launches close together) produce early outputs that also differ
+; in only a few bits. splitmix64's finalizer -- add a constant, then
+; xor-shift/multiply three times -- scrambles every input bit across
+; the whole 64-bit state first. It's the standard way to seed the
+; xorshift family.
+;
+; xorshift has exactly one bad state: 0, which maps to 0 forever. The
+; mix makes that astronomically unlikely, but it costs two instructions
+; to rule it out entirely.
+rng_seed:
+    rdtsc
+    shl rdx, 32
+    or rax, rdx                          ; rax = full 64-bit timestamp
+
+    mov rdx, 0x9E3779B97F4A7C15
+    add rax, rdx
+    mov rdx, rax
+    shr rdx, 30
+    xor rax, rdx
+    mov rdx, 0xBF58476D1CE4E5B9
+    imul rax, rdx
+    mov rdx, rax
+    shr rdx, 27
+    xor rax, rdx
+    mov rdx, 0x94D049BB133111EB
+    imul rax, rdx
+    mov rdx, rax
+    shr rdx, 31
+    xor rax, rdx
+
+    test rax, rax
+    jnz .seed_ok
+    mov rax, 0x9E3779B97F4A7C15          ; any nonzero constant
+.seed_ok:
+    mov [rng_state], rax
+    ret
+
+
+; uint32 rng_next(void) -> eax
+;
+; Marsaglia's xorshift64: x ^= x << 13; x ^= x >> 7; x ^= x << 17.
+; Three shift-and-xor steps, no multiply, no divide. Period 2^64 - 1:
+; it visits every nonzero 64-bit value exactly once before repeating.
+;
+; Returns the HIGH 32 bits. The low bits of a plain xorshift are its
+; weakest (they fail some statistical tests the high bits pass), and
+; update_soldiers uses exactly one bit of every draw (`and eax, 1`)
+; to pick the processing direction -- the same fairness fix whose
+; accidental removal was stage6b's bug #2. Handing it the best bit we
+; have costs one `shr`.
+;
+; Clobbers only rax and rdx (rand() was free to clobber every
+; caller-saved register, so every call site already assumes worse).
+rng_next:
+    mov rax, [rng_state]
+    mov rdx, rax
+    shl rdx, 13
+    xor rax, rdx
+    mov rdx, rax
+    shr rdx, 7
+    xor rax, rdx
+    mov rdx, rax
+    shl rdx, 17
+    xor rax, rdx
+    mov [rng_state], rax
+    shr rax, 32
+    ret
+
+
+; int rand_range(int n: edi) -> eax in [0, n)
+; rng_next() % n. The modulo is very slightly biased toward small
+; values (2^32 isn't a multiple of n), by at most n / 2^32 -- about
+; one part in 8 million for the largest n used here (537).
+rand_range:
+    push rbx
+    mov ebx, edi
+    call rng_next
+    xor edx, edx
+    div ebx
+    mov eax, edx
+    pop rbx
+    ret
+
+
+; INIT_SOLDIER: set every field of one soldier. A macro rather than a
+; function, just so both teams' soldiers are set up by literally the
+; same lines.
+%macro INIT_SOLDIER 4   ; %1 = soldier index reg, %2 = x reg, %3 = y reg, %4 = team
+    mov eax, %1
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov [r10 + Soldier.x], %2
+    mov [r10 + Soldier.y], %3
+    mov dword [r10 + Soldier.team], %4
+    mov dword [r10 + Soldier.health], 100
+    mov dword [r10 + Soldier.weapon], WEAPON_KNIFE
+    mov dword [r10 + Soldier.state], STATE_SEEK_ENEMY
+    mov dword [r10 + Soldier.target], -1
+    mov dword [r10 + Soldier.cooldown], 0
+    mov dword [r10 + Soldier.avoid_dir], 0
+%endmacro
+
+; void spawn_soldiers(void)
+; For each k: pick a random spot in team 0's spawn rectangle, and try
+; again if it's within SPAWN_GAP (on both axes) of any team 0 soldier
+; already placed. Then place team 0's soldier k there and team 1's
+; soldier k at the mirror image (same rule as stage6c:
+; x' = SCREEN_W - SOLDIER_SIZE - x).
+;
+; Only team 0's spots need checking against each other. The mirror of a
+; valid team 0 layout is automatically a valid team 1 layout, and the
+; two halves can't touch, since the whole spawn area is left of x=200.
+;
+; The retry loop has no attempt limit, and at these numbers it doesn't
+; need one. A Python simulation of this exact loop over 2000 layouts
+; averaged ~111 random tries for all 50 soldiers, and the unluckiest
+; single soldier needed 32. It's not "plenty of room," though: past
+; roughly 100 per team the rectangle jams (no gap left anywhere) and
+; this loop would spin forever. See the exercise at the bottom.
+spawn_soldiers:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    xor r12d, r12d                        ; k
+.ss_next_k:
+    cmp r12d, NUM_PER_TEAM
+    jge .ss_done
+
+.ss_retry:
+    mov edi, SPAWN_MAX_X - SPAWN_MIN_X + 1
+    call rand_range
+    lea r13d, [eax + SPAWN_MIN_X]        ; x
+    mov edi, SPAWN_MAX_Y - SPAWN_MIN_Y + 1
+    call rand_range
+    lea r14d, [eax + SPAWN_MIN_Y]        ; y
+
+    ; too close to an already-placed team 0 soldier (0..k-1)?
+    xor ebx, ebx
+.ss_check:
+    cmp ebx, r12d
+    jge .ss_place
+    mov eax, ebx
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+
+    mov eax, [r10 + Soldier.x]
+    sub eax, r13d
+    jns .ss_dx_ok
+    neg eax
+.ss_dx_ok:
+    cmp eax, SPAWN_GAP
+    jge .ss_check_next
+    mov eax, [r10 + Soldier.y]
+    sub eax, r14d
+    jns .ss_dy_ok
+    neg eax
+.ss_dy_ok:
+    cmp eax, SPAWN_GAP
+    jl .ss_retry                          ; too close on both axes
+.ss_check_next:
+    inc ebx
+    jmp .ss_check
+
+.ss_place:
+    INIT_SOLDIER r12d, r13d, r14d, 0
+
+    mov r15d, SCREEN_W - SOLDIER_SIZE
+    sub r15d, r13d                        ; mirrored x
+    lea ebx, [r12d + NUM_PER_TEAM]
+    INIT_SOLDIER ebx, r15d, r14d, 1
+
+    inc r12d
+    jmp .ss_next_k
+.ss_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void spawn_pickups(void)
+; Pickup 2i is left_pickups[i] moved by a random offset in
+; [-PICKUP_JITTER, +PICKUP_JITTER] on each axis; pickup 2i+1 is its
+; mirror, with the same type. Weapon TYPE has to mirror too, not just
+; position -- see stage6b's README bug #3.
+;
+; The mirror uses SOLDIER_SIZE, not PICKUP_SIZE, on purpose. Every
+; distance the AI measures is corner to corner (soldier top-left to
+; pickup top-left), so the pickup's corner has to mirror the same way a
+; soldier's does or one team ends up 6px closer to every weapon. See
+; stage6c's README, bug #2.
+spawn_pickups:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    lea r12, [pickups]
+    lea r13, [left_pickups]
+    xor r14d, r14d
+.sp_loop:
+    cmp r14d, PICKUPS_PER_SIDE
+    jge .sp_done
+
+    mov edi, 2 * PICKUP_JITTER + 1
+    call rand_range
+    mov ebx, [r13]
+    add ebx, eax
+    sub ebx, PICKUP_JITTER                ; x
+    mov edi, 2 * PICKUP_JITTER + 1
+    call rand_range
+    mov r15d, [r13 + 4]
+    add r15d, eax
+    sub r15d, PICKUP_JITTER               ; y
+
+    ; landed where a soldier can't stand (in or against a wall)? Slide
+    ; toward our own spawn until it's clear. Walls never reach x < 200,
+    ; so this always stops. The mirror below slides the other way,
+    ; since it copies the final x.
+.sp_slide:
+    mov edi, ebx
+    mov esi, r15d
+    call is_box_blocked
+    test eax, eax
+    jz .sp_slid
+    dec ebx
+    jmp .sp_slide
+.sp_slid:
+    mov r8d, [r13 + 8]                    ; type
+
+    mov [r12 + Pickup.x], ebx
+    mov [r12 + Pickup.y], r15d
+    mov [r12 + Pickup.type], r8d
+    mov dword [r12 + Pickup.active], 1
+    add r12, Pickup_size
+
+    mov eax, SCREEN_W - SOLDIER_SIZE
+    sub eax, ebx                          ; mirror the corner the AI measures from
+    mov [r12 + Pickup.x], eax
+    mov [r12 + Pickup.y], r15d
+    mov [r12 + Pickup.type], r8d
+    mov dword [r12 + Pickup.active], 1
+    add r12, Pickup_size
+
+    add r13, LEFT_PICKUP_ENTRY
+    inc r14d
+    jmp .sp_loop
+.sp_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void seed_from_env(void)
+; SEED=n (decimal, or 0x... hex) replaces the rdtsc seed, to replay a
+; game exactly. A stalemate prints the seed it started from. SEED=0
+; is ignored: xorshift can't use a zero state.
+seed_from_env:
+    sub rsp, 8                    ; align the stack for the libc calls
+    lea rdi, [seed_env]
+    call getenv
+    test rax, rax
+    jz .sfe_done
+    mov rdi, rax
+    xor esi, esi                  ; no end pointer
+    xor edx, edx                  ; base 0: decimal, or 0x for hex
+    call strtoull
+    test rax, rax
+    jz .sfe_done
+    mov [rng_state], rax
+.sfe_done:
+    add rsp, 8
+    ret
+
+
+; int is_headless(void) -> eax: 1 if $HEADLESS is set and doesn't
+; start with '0' (so HEADLESS=0 means windowed), else 0.
+is_headless:
+    sub rsp, 8                    ; align the stack for getenv
+    lea rdi, [headless_env]
+    call getenv
+    add rsp, 8
+    test rax, rax
+    jz .ih_no
+    cmp byte [rax], '0'
+    je .ih_no
+    cmp byte [rax], 0             ; HEADLESS= (empty) counts as no
+    je .ih_no
+    mov eax, 1
+    ret
+.ih_no:
+    xor eax, eax
+    ret
+
+
+; void print_winner(int winner: eax) -- check_win's 1 = team 0, 2 = team 1
+print_winner:
+    lea rsi, [win_msg0]
+    mov edx, win_msg0_len
+    cmp eax, 1
+    je .pw_have
+    lea rsi, [win_msg1]
+    mov edx, win_msg1_len
+.pw_have:
+    jmp print_result
+
+
+; ============================================================
+; Pathfinding (see the header). Cell k on either axis covers corner
+; coordinates [CELL*k - (CELL-1), CELL*k], clipped to the field, so a
+; coordinate v is in cell (v + CELL-1) / CELL.
+; ============================================================
+
+; CELL_OF reg: reg = (reg + CELL-1) / CELL. Clobbers eax, ecx, edx.
+%macro CELL_OF 1
+    lea eax, [%1 + CELL - 1]
+    xor edx, edx
+    mov ecx, CELL
+    div ecx
+    mov %1, eax
+%endmacro
+
+; int is_rect_blocked(int x: edi, int y: esi, int w: edx, int h: ecx) -> eax
+; Does the rectangle [x, x+w) x [y, y+h) overlap any wall? Walls only:
+; the screen edges are handled by the grid's own bounds.
+is_rect_blocked:
+    push rbx
+    lea r8d, [edi + edx]          ; right
+    lea r9d, [esi + ecx]          ; bottom
+    lea r10, [obstacles]
+    xor ebx, ebx
+.irb_loop:
+    cmp ebx, [num_obstacles]
+    jge .irb_clear
+    cmp r8d, [r10 + Obstacle.x]
+    jle .irb_next                 ; entirely left of the wall
+    mov eax, [r10 + Obstacle.x]
+    add eax, [r10 + Obstacle.w]
+    cmp edi, eax
+    jge .irb_next                 ; entirely right
+    cmp r9d, [r10 + Obstacle.y]
+    jle .irb_next                 ; entirely above
+    mov eax, [r10 + Obstacle.y]
+    add eax, [r10 + Obstacle.h]
+    cmp esi, eax
+    jge .irb_next                 ; entirely below
+    mov eax, 1
+    pop rbx
+    ret
+.irb_next:
+    add r10, Obstacle_size
+    inc ebx
+    jmp .irb_loop
+.irb_clear:
+    xor eax, eax
+    pop rbx
+    ret
+
+
+; CLAMP_TO reg, hi: reg = min(max(reg, 0), hi)
+%macro CLAMP_TO 2
+    test %1, %1
+    jns %%lo_ok
+    xor %1, %1
+%%lo_ok:
+    cmp %1, %2
+    jle %%hi_ok
+    mov %1, %2
+%%hi_ok:
+%endmacro
+
+; void build_walkable(void)
+; walkable[cell] = 1 if a soldier box with its corner ANYWHERE in the
+; cell misses every wall. That's one rectangle test: the union of all
+; those boxes is the cell's corner range grown by SOLDIER_SIZE. Being
+; this strict means a soldier moving between walkable cells can never
+; clip a wall, whatever pixel it's on.
+build_walkable:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    lea rbx, [walkable]
+    xor r12d, r12d                ; cy
+.bw_row:
+    cmp r12d, GRID_H
+    jge .bw_done
+    imul r14d, r12d, CELL         ; y_hi = min(CELL*cy, SCREEN_H - SIZE)
+    mov r15d, r14d
+    sub r15d, CELL - 1            ; y_lo = max(CELL*cy - (CELL-1), 0)
+    jns .bw_ylo_ok
+    xor r15d, r15d
+.bw_ylo_ok:
+    cmp r14d, SCREEN_H - SOLDIER_SIZE
+    jle .bw_yhi_ok
+    mov r14d, SCREEN_H - SOLDIER_SIZE
+.bw_yhi_ok:
+    xor r13d, r13d                ; cx
+.bw_col:
+    cmp r13d, GRID_W
+    jge .bw_row_next
+    imul r8d, r13d, CELL          ; x_hi
+    mov edi, r8d
+    sub edi, CELL - 1             ; x_lo
+    jns .bw_xlo_ok
+    xor edi, edi
+.bw_xlo_ok:
+    cmp r8d, SCREEN_W - SOLDIER_SIZE
+    jle .bw_xhi_ok
+    mov r8d, SCREEN_W - SOLDIER_SIZE
+.bw_xhi_ok:
+    mov edx, r8d
+    sub edx, edi
+    add edx, SOLDIER_SIZE         ; w
+    mov esi, r15d
+    mov ecx, r14d
+    sub ecx, r15d
+    add ecx, SOLDIER_SIZE         ; h
+    call is_rect_blocked
+    xor eax, 1
+    mov [rbx], al
+    inc rbx
+    inc r13d
+    jmp .bw_col
+.bw_row_next:
+    inc r12d
+    jmp .bw_row
+.bw_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void bfs_begin(uint16 *field: rdi) -- all cells UNREACHED, queue empty
+bfs_begin:
+    mov [bfs_field], rdi
+    mov dword [bfs_tail], 0
+    mov ecx, GRID_CELLS
+    mov ax, UNREACHED
+    cld
+    rep stosw
+    ret
+
+
+; void bfs_seed(int x: edi, int y: esi) -- the cell holding corner
+; (x, y) is a source: distance 0. A source cell doesn't have to be
+; walkable (a soldier can stand in a cell that isn't fully clear).
+bfs_seed:
+    CELL_OF esi
+    CELL_OF edi
+    imul esi, esi, GRID_W
+    add esi, edi                  ; cell index
+    mov r8, [bfs_field]
+    cmp word [r8 + rsi*2], 0
+    je .bs_done                   ; already a source
+    mov word [r8 + rsi*2], 0
+    mov eax, [bfs_tail]
+    lea r9, [bfs_queue]
+    mov [r9 + rax*4], esi
+    inc dword [bfs_tail]
+.bs_done:
+    ret
+
+
+; BFS_VISIT offset: visit neighbour n = cell + offset, if it is
+; walkable and unvisited (the caller has done the bounds check).
+; Registers as in bfs_run.
+%macro BFS_VISIT 1
+    lea eax, [ebx + %1]
+    cmp byte [r10 + rax], 0
+    je %%skip
+    cmp word [r8 + rax*2], UNREACHED
+    jne %%skip
+    mov [r8 + rax*2], r12w
+    mov [r9 + r11*4], eax
+    inc r11d
+%%skip:
+%endmacro
+
+; void bfs_run(void) -- breadth-first from the seeded sources, over
+; 4-connected walkable cells. Each cell is queued at most once, so the
+; queue never needs to wrap.
+;   r8 field   r9 queue   r10 walkable   r11d tail   esi head
+;   ebx cell   r12w its distance + 1   r13d cx   r14d cy
+bfs_run:
+    push rbx
+    push r12
+    push r13
+    push r14
+    mov r8, [bfs_field]
+    lea r9, [bfs_queue]
+    lea r10, [walkable]
+    mov r11d, [bfs_tail]
+    xor esi, esi
+.br_loop:
+    cmp esi, r11d
+    jge .br_done
+    mov ebx, [r9 + rsi*4]
+    inc esi
+    movzx r12d, word [r8 + rbx*2]
+    inc r12d
+    mov eax, ebx
+    xor edx, edx
+    mov ecx, GRID_W
+    div ecx
+    mov r13d, edx                 ; cx
+    mov r14d, eax                 ; cy
+
+    cmp r13d, GRID_W - 1
+    jge .br_no_right
+    BFS_VISIT 1
+.br_no_right:
+    test r13d, r13d
+    jz .br_no_left
+    BFS_VISIT -1
+.br_no_left:
+    cmp r14d, GRID_H - 1
+    jge .br_no_down
+    BFS_VISIT GRID_W
+.br_no_down:
+    test r14d, r14d
+    jz .br_loop
+    BFS_VISIT -GRID_W
+    jmp .br_loop
+.br_done:
+    mov [bfs_tail], r11d
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void build_fields(void) -- the three distance fields for this tick
+build_fields:
+    push rbx
+    push r12
+    push r13
+    lea r13, [field_to0]
+    xor r12d, r12d                ; team
+.bf_team:
+    mov rdi, r13
+    call bfs_begin
+    lea rbx, [soldiers]
+.bf_soldier:
+    cmp dword [rbx + Soldier.health], 0
+    jle .bf_soldier_next
+    cmp [rbx + Soldier.team], r12d
+    jne .bf_soldier_next
+    mov edi, [rbx + Soldier.x]
+    mov esi, [rbx + Soldier.y]
+    call bfs_seed
+.bf_soldier_next:
+    add rbx, Soldier_size
+    lea rax, [soldiers + TOTAL_SOLDIERS * Soldier_size]
+    cmp rbx, rax
+    jb .bf_soldier
+    call bfs_run
+    lea r13, [field_to1]
+    inc r12d
+    cmp r12d, 2
+    jb .bf_team
+
+    lea rdi, [field_pk]
+    call bfs_begin
+    lea rbx, [pickups]
+.bf_pickup:
+    cmp dword [rbx + Pickup.active], 0
+    je .bf_pickup_next
+    mov edi, [rbx + Pickup.x]
+    mov esi, [rbx + Pickup.y]
+    call bfs_seed
+.bf_pickup_next:
+    add rbx, Pickup_size
+    lea rax, [pickups + MAX_PICKUPS * Pickup_size]
+    cmp rbx, rax
+    jb .bf_pickup
+    call bfs_run
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; int flow_waypoint(int self: edi, uint16 *field: rsi) -> eax (1 or 0)
+; Where to walk next on the field. Returns a cell centre in
+; flow_wx/flow_wy, or 0 if no neighbour is closer to the goal.
+;
+; Pass 1 collects every neighbour (of the 8 around the soldier's own
+; cell) that is walkable and strictly closer than the soldier's own
+; cell. A diagonal only counts if both cells it cuts past are walkable
+; too, so the step can't clip a wall's corner.
+;
+; Pass 2 tries them closest first, and takes the first one whose next
+; step (the same MOVE_SPEED-clamped step .clear_step will take) isn't
+; blocked by another soldier. 09 only ever returned the single best
+; cell, so two teammates whose best steps crossed blocked each other
+; forever, even when one had an equally good way round (10's README).
+; If every candidate is blocked, it returns the best one anyway, and
+; .clear_step's usual fallbacks take over.
+;
+; Ties (in both passes) go to the first in flow_dirs, with dx flipped
+; for team 1: "forward" first, for both teams.
+FW_CAND   equ 0          ; 8 x (dword distance, dword cell)
+FW_SELF   equ 64
+FW_X      equ 68
+FW_Y      equ 72
+FW_FIRST  equ 76         ; the closest candidate's cell, for the fallback
+FW_LOCALS equ 80         ; 5 pushes + 80 keeps rsp 16-byte aligned
+
+; FW_CENTRE cell_reg: flow_wx/flow_wy = that cell's centre. Clobbers
+; eax, ecx, edx.
+%macro FW_CENTRE 1
+    mov eax, %1
+    xor edx, edx
+    mov ecx, GRID_W
+    div ecx                       ; eax = cy, edx = cx
+    imul edx, edx, CELL
+    sub edx, CELL / 2             ; centre of [CELL*k - (CELL-1), CELL*k]
+    imul eax, eax, CELL
+    sub eax, CELL / 2
+    CLAMP_TO edx, SCREEN_W - SOLDIER_SIZE
+    CLAMP_TO eax, SCREEN_H - SOLDIER_SIZE
+    mov [flow_wx], edx
+    mov [flow_wy], eax
+%endmacro
+
+; CLAMP_STEP reg: reg = min(max(reg, -MOVE_SPEED), MOVE_SPEED)
+%macro CLAMP_STEP 1
+    cmp %1, MOVE_SPEED
+    jle %%hi_ok
+    mov %1, MOVE_SPEED
+%%hi_ok:
+    cmp %1, -MOVE_SPEED
+    jge %%lo_ok
+    mov %1, -MOVE_SPEED
+%%lo_ok:
+%endmacro
+
+flow_waypoint:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, FW_LOCALS
+    mov [rsp + FW_SELF], edi
+    imul eax, edi, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov r14d, 1
+    cmp dword [r10 + Soldier.team], 0
+    je .fw_fwd_ok
+    neg r14d
+.fw_fwd_ok:
+    mov eax, [r10 + Soldier.x]
+    mov [rsp + FW_X], eax
+    mov eax, [r10 + Soldier.y]
+    mov [rsp + FW_Y], eax
+    mov r12d, [r10 + Soldier.x]
+    CELL_OF r12d
+    mov r13d, [r10 + Soldier.y]
+    CELL_OF r13d
+    imul eax, r13d, GRID_W
+    add eax, r12d
+    movzx r15d, word [rsi + rax*2]   ; own cell's distance
+    xor ebx, ebx                  ; candidates found
+
+    ; ---- pass 1: collect the closer neighbours ----
+    ;   r12d cx   r13d cy   r14d forward sign   r15d own distance
+    ;   ebx count   rdi dir index   rsi field
+    lea r10, [walkable]
+    lea r11, [flow_dirs]
+    xor edi, edi
+.fw_dir:
+    cmp edi, 8
+    jge .fw_collected
+    movsx r8d, byte [r11 + rdi*2]
+    imul r8d, r14d                ; dx, forward-adjusted
+    movsx r9d, byte [r11 + rdi*2 + 1]
+    add r8d, r12d                 ; nx
+    add r9d, r13d                 ; ny
+    cmp r8d, GRID_W
+    jae .fw_next                  ; unsigned: catches -1 too
+    cmp r9d, GRID_H
+    jae .fw_next
+    imul eax, r9d, GRID_W
+    add eax, r8d                  ; n
+    cmp byte [r10 + rax], 0
+    je .fw_next
+    cmp r8d, r12d
+    je .fw_straight
+    cmp r9d, r13d
+    je .fw_straight
+    imul ecx, r13d, GRID_W        ; diagonal: (nx, cy) and (cx, ny) too
+    add ecx, r8d
+    cmp byte [r10 + rcx], 0
+    je .fw_next
+    imul ecx, r9d, GRID_W
+    add ecx, r12d
+    cmp byte [r10 + rcx], 0
+    je .fw_next
+.fw_straight:
+    movzx ecx, word [rsi + rax*2]
+    cmp ecx, r15d
+    jae .fw_next                  ; not closer than where we are
+    mov [rsp + FW_CAND + rbx*8], ecx
+    mov [rsp + FW_CAND + rbx*8 + 4], eax
+    inc ebx
+.fw_next:
+    inc edi
+    jmp .fw_dir
+
+.fw_collected:
+    xor eax, eax
+    test ebx, ebx
+    jz .fw_ret                    ; nothing closer: caller side-steps
+    mov dword [rsp + FW_FIRST], -1
+
+    ; ---- pass 2: closest first, skipping steps another soldier blocks ----
+    ;   ebx count   r12d best index this round   r13d its distance
+.fw_pick:
+    mov r12d, -1
+    mov r13d, 0xFFFFFFFF
+    xor ecx, ecx
+.fw_scan:
+    cmp ecx, ebx
+    jge .fw_scanned
+    mov eax, [rsp + FW_CAND + rcx*8]
+    cmp eax, r13d
+    jae .fw_scan_next             ; strictly closer: ties keep dir order
+    mov r13d, eax
+    mov r12d, ecx
+.fw_scan_next:
+    inc ecx
+    jmp .fw_scan
+.fw_scanned:
+    cmp r12d, -1
+    je .fw_all_blocked
+    mov dword [rsp + FW_CAND + r12*8], 0xFFFFFFFF   ; used up
+    mov r15d, [rsp + FW_CAND + r12*8 + 4]           ; its cell
+    cmp dword [rsp + FW_FIRST], -1
+    jne .fw_have_first
+    mov [rsp + FW_FIRST], r15d
+.fw_have_first:
+    FW_CENTRE r15d
+    mov esi, [flow_wx]
+    sub esi, [rsp + FW_X]
+    CLAMP_STEP esi
+    add esi, [rsp + FW_X]
+    mov edx, [flow_wy]
+    sub edx, [rsp + FW_Y]
+    CLAMP_STEP edx
+    add edx, [rsp + FW_Y]
+    mov edi, [rsp + FW_SELF]
+    call is_spot_blocked
+    test eax, eax
+    jnz .fw_pick                  ; someone's there: try the next closest
+    mov eax, 1
+    jmp .fw_ret
+
+.fw_all_blocked:
+    mov r15d, [rsp + FW_FIRST]
+    FW_CENTRE r15d
+    mov eax, 1
+.fw_ret:
+    add rsp, FW_LOCALS
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; ============================================================
+; Scoreboard (drawing only: reads the game state, never writes it,
+; never draws a random number)
+; ============================================================
+
+; void draw_text(char *s: rdi, int len: esi, int x: edx, int y: ecx,
+;                uint32 color: r8d)
+; Each font pixel that's set becomes a FONT_SCALE square, via
+; fill_rect. Lowercase is drawn as uppercase; anything outside
+; ' '..'Z' as a blank.
+;   rbx string   r12d chars left   r13d x   r14d y   r15d color
+;   stack: glyph pointer, row, col, row bits
+DT_GLYPH equ 0
+DT_ROW   equ 8
+DT_COL   equ 12
+DT_BITS  equ 16
+draw_text:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+    sub rsp, 32                   ; 5 pushes + 32: rsp stays 16-aligned
+    mov rbx, rdi
+    mov r12d, esi
+    mov r13d, edx
+    mov r14d, ecx
+    mov r15d, r8d
+.dt_char:
+    test r12d, r12d
+    jz .dt_done
+    movzx eax, byte [rbx]
+    cmp eax, 'a'
+    jb .dt_upper
+    cmp eax, 'z'
+    ja .dt_upper
+    sub eax, 'a' - 'A'
+.dt_upper:
+    sub eax, FONT_FIRST
+    cmp eax, FONT_LAST - FONT_FIRST
+    ja .dt_next_char              ; unsigned: below ' ' wraps round too
+    imul eax, eax, FONT_ROWS
+    lea rcx, [font]
+    add rax, rcx
+    mov [rsp + DT_GLYPH], rax
+    mov dword [rsp + DT_ROW], 0
+.dt_row:
+    mov eax, [rsp + DT_ROW]
+    cmp eax, FONT_ROWS
+    jge .dt_next_char
+    mov rcx, [rsp + DT_GLYPH]
+    movzx ecx, byte [rcx + rax]
+    mov [rsp + DT_BITS], ecx
+    mov dword [rsp + DT_COL], 0
+.dt_col:
+    mov ecx, [rsp + DT_COL]
+    cmp ecx, FONT_COLS
+    jge .dt_next_row
+    mov eax, 1 << (FONT_COLS - 1)
+    shr eax, cl                   ; this column's bit
+    test [rsp + DT_BITS], eax
+    jz .dt_next_col
+    lea rdi, [back_fb]
+    imul esi, ecx, FONT_SCALE
+    add esi, r13d
+    imul edx, [rsp + DT_ROW], FONT_SCALE
+    add edx, r14d
+    mov ecx, FONT_SCALE
+    mov r8d, FONT_SCALE
+    mov r9d, r15d
+    call fill_rect
+.dt_next_col:
+    inc dword [rsp + DT_COL]
+    jmp .dt_col
+.dt_next_row:
+    inc dword [rsp + DT_ROW]
+    jmp .dt_row
+.dt_next_char:
+    inc rbx
+    dec r12d
+    add r13d, CHAR_ADV
+    jmp .dt_char
+.dt_done:
+    add rsp, 32
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; DRAW_HUD_BUF align, color: draw hud_buf[0 .. rdi) at y HUD_TEXT_Y,
+; aligned HUD_LEFT, HUD_RIGHT or HUD_CENTRE.
+HUD_LEFT   equ 0
+HUD_RIGHT  equ 1
+HUD_CENTRE equ 2
+%macro DRAW_HUD_BUF 2
+    mov rsi, rdi
+    lea rdi, [hud_buf]
+    sub rsi, rdi                  ; length
+    imul eax, esi, CHAR_ADV
+    sub eax, FONT_SCALE           ; width: no spacing after the last char
+    %if %1 == HUD_LEFT
+        mov edx, HUD_MARGIN
+    %elif %1 == HUD_RIGHT
+        mov edx, SCREEN_W - HUD_MARGIN
+        sub edx, eax
+    %else
+        mov edx, SCREEN_W
+        sub edx, eax
+        shr edx, 1
+    %endif
+    mov ecx, HUD_TEXT_Y
+    mov r8d, %2
+    call draw_text
+%endmacro
+
+; void draw_hud(void)
+;   BLUE 37        PILLARS   0:12        RED 41
+; The middle shows the winner once the game is over.
+draw_hud:
+    push rbx
+    push r12
+    sub rsp, 8                    ; keep the stack 16-byte aligned
+
+    lea rdi, [back_fb]
+    xor esi, esi
+    mov edx, SCREEN_H
+    mov ecx, SCREEN_W
+    mov r8d, HUD_H
+    mov r9d, COLOR_HUD
+    call fill_rect
+
+    ; living soldiers per team -> ebx (team 0), r12d (team 1)
+    xor ebx, ebx
+    xor r12d, r12d
+    lea r10, [soldiers]
+    xor ecx, ecx
+.dh_count:
+    cmp dword [r10 + Soldier.health], 0
+    jle .dh_count_next
+    cmp dword [r10 + Soldier.team], 0
+    jne .dh_count_t1
+    inc ebx
+    jmp .dh_count_next
+.dh_count_t1:
+    inc r12d
+.dh_count_next:
+    add r10, Soldier_size
+    inc ecx
+    cmp ecx, TOTAL_SOLDIERS
+    jl .dh_count
+
+    ; ---- left: BLUE n ----
+    lea rdi, [hud_buf]
+    lea rsi, [hud_blue]
+    mov edx, hud_blue_len
+    call append_bytes
+    mov esi, ebx
+    call append_uint
+    DRAW_HUD_BUF HUD_LEFT, COLOR_TEAM0
+
+    ; ---- right: RED n, right-aligned ----
+    lea rdi, [hud_buf]
+    lea rsi, [hud_red]
+    mov edx, hud_red_len
+    call append_bytes
+    mov esi, r12d
+    call append_uint
+    DRAW_HUD_BUF HUD_RIGHT, COLOR_TEAM1
+
+    ; ---- middle ----
+    lea rdi, [hud_buf]
+    mov eax, [game_over]
+    test eax, eax
+    jz .dh_playing
+    mov r12d, COLOR_TEAM0
+    lea rsi, [hud_blue]
+    mov edx, hud_blue_len - 1     ; no trailing space
+    cmp eax, 1
+    je .dh_winner
+    mov r12d, COLOR_TEAM1
+    lea rsi, [hud_red]
+    mov edx, hud_red_len - 1
+.dh_winner:
+    call append_bytes
+    lea rsi, [hud_wins]
+    mov edx, hud_wins_len
+    call append_bytes
+    jmp .dh_middle
+
+.dh_playing:
+    mov r12d, COLOR_HUD_TEXT
+    call append_arena_name
+    lea rsi, [hud_gap]
+    mov edx, hud_gap_len
+    call append_bytes
+    ; m:ss from ticks, 60 per second
+    mov eax, [ticks]
+    xor edx, edx
+    mov ecx, 60
+    div ecx                       ; eax = seconds
+    xor edx, edx
+    div ecx                       ; eax = minutes, edx = seconds
+    mov ebx, edx
+    mov esi, eax
+    call append_uint
+    mov byte [rdi], ':'
+    inc rdi
+    cmp ebx, 10
+    jae .dh_two_digits
+    mov byte [rdi], '0'
+    inc rdi
+.dh_two_digits:
+    mov esi, ebx
+    call append_uint
+.dh_middle:
+    DRAW_HUD_BUF HUD_CENTRE, r12d
+
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+
+; void choose_arena(void)
+; arena_idx = $ARENA if it's set to a valid number, else a random
+; arena. atoi returns 0 for junk, so ARENA=abc means arena 0.
+choose_arena:
+    sub rsp, 8                    ; align the stack for the libc calls
+    lea rdi, [arena_env]
+    call getenv
+    test rax, rax
+    jz .ca_random
+    mov rdi, rax
+    call atoi
+    cmp eax, NUM_ARENAS
+    jb .ca_have                   ; unsigned: negatives count as too big
+.ca_random:
+    mov edi, NUM_ARENAS
+    call rand_range
+.ca_have:
+    mov [arena_idx], eax
+    add rsp, 8
+    ret
+
+
+; rsi = this game's Arena row. Clobbers rax.
+%macro ARENA_ROW_PTR 0
+    mov eax, [arena_idx]
+    imul eax, Arena_size
+    lea rsi, [arena_table]
+    add rsi, rax
+%endmacro
+
+; void spawn_obstacles(void)
+; Copies this game's arena into `obstacles`: each listed wall, then
+; its mirror (x' = SCREEN_W - x - w) unless the wall is its own
+; mirror. Stage6c's single split wall is now arena 0 ("Divide").
+spawn_obstacles:
+    ARENA_ROW_PTR
+    mov ecx, [rsi + Arena.count]
+    mov rsi, [rsi + Arena.walls]
+    lea rdi, [obstacles]
+    xor edx, edx                  ; walls written
+.so_loop:
+    test ecx, ecx
+    jz .so_done
+    mov eax, [rsi + Obstacle.x]
+    mov [rdi + Obstacle.x], eax
+    mov eax, [rsi + Obstacle.y]
+    mov [rdi + Obstacle.y], eax
+    mov eax, [rsi + Obstacle.w]
+    mov [rdi + Obstacle.w], eax
+    mov eax, [rsi + Obstacle.h]
+    mov [rdi + Obstacle.h], eax
+    add rdi, Obstacle_size
+    inc edx
+
+    mov eax, SCREEN_W
+    sub eax, [rsi + Obstacle.x]
+    sub eax, [rsi + Obstacle.w]   ; mirrored x
+    cmp eax, [rsi + Obstacle.x]
+    je .so_next                   ; its own mirror -- only one copy
+    mov [rdi + Obstacle.x], eax
+    mov eax, [rsi + Obstacle.y]
+    mov [rdi + Obstacle.y], eax
+    mov eax, [rsi + Obstacle.w]
+    mov [rdi + Obstacle.w], eax
+    mov eax, [rsi + Obstacle.h]
+    mov [rdi + Obstacle.h], eax
+    add rdi, Obstacle_size
+    inc edx
+.so_next:
+    add rsi, Obstacle_size
+    dec ecx
+    jmp .so_loop
+.so_done:
+    mov [num_obstacles], edx
+    ret
+
+
+; void build_title(void)
+; title_buf = "Stage 7.08 - <arena name>", 0-terminated for SDL.
+build_title:
+    lea rdi, [title_buf]
+    lea rsi, [title_prefix]
+    mov edx, title_prefix_len
+    call append_bytes
+    call append_arena_name
+    mov byte [rdi], 0
+    ret
+
+
+; append_arena_name(dst: rdi) -> rdi = past the name
+append_arena_name:
+    ARENA_ROW_PTR
+    mov edx, [rsi + Arena.name_len]
+    mov rsi, [rsi + Arena.name]
+    jmp append_bytes
+
+
+; int find_nearest_enemy(int self_index: edi) -> eax (index, or -1)
+FNE_SELF     equ -8
+FNE_MY_X     equ -16
+FNE_MY_Y     equ -24
+FNE_MY_TEAM  equ -32
+FNE_BEST_IDX equ -40
+FNE_BEST_DIST equ -48
+FNE_J        equ -56
+
+find_nearest_enemy:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 64
+
+    mov [rbp + FNE_SELF], edi
+
+    mov eax, edi
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [r10 + Soldier.x]
+    mov [rbp + FNE_MY_X], eax
+    mov eax, [r10 + Soldier.y]
+    mov [rbp + FNE_MY_Y], eax
+    mov eax, [r10 + Soldier.team]
+    mov [rbp + FNE_MY_TEAM], eax
+
+    mov dword [rbp + FNE_BEST_IDX], -1
+    mov dword [rbp + FNE_BEST_DIST], 0x7FFFFFFF
+
+    mov dword [rbp + FNE_J], 0
+.scan_loop:
+    mov eax, [rbp + FNE_J]
+    cmp eax, TOTAL_SOLDIERS
+    jge .scan_done
+
+    cmp eax, [rbp + FNE_SELF]
+    je .scan_next
+
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+
+    cmp dword [r10 + Soldier.health], 0
+    jle .scan_next
+
+    mov eax, [r10 + Soldier.team]
+    cmp eax, [rbp + FNE_MY_TEAM]
+    je .scan_next
+
+    mov eax, [r10 + Soldier.x]
+    sub eax, [rbp + FNE_MY_X]
+    imul eax, eax
+    mov ecx, eax
+
+    mov eax, [r10 + Soldier.y]
+    sub eax, [rbp + FNE_MY_Y]
+    imul eax, eax
+    add ecx, eax
+
+    cmp ecx, [rbp + FNE_BEST_DIST]
+    jge .scan_next
+    mov [rbp + FNE_BEST_DIST], ecx
+    mov eax, [rbp + FNE_J]
+    mov [rbp + FNE_BEST_IDX], eax
+
+.scan_next:
+    mov eax, [rbp + FNE_J]
+    inc eax
+    mov [rbp + FNE_J], eax
+    jmp .scan_loop
+.scan_done:
+    mov eax, [rbp + FNE_BEST_IDX]
+    mov rsp, rbp
+    pop rbp
+    ret
+
+
+; int find_nearest_pickup(int self_index: edi) -> eax (index, or -1)
+FNP_MY_X      equ -8
+FNP_MY_Y      equ -16
+FNP_BEST_IDX  equ -24
+FNP_BEST_DIST equ -32
+FNP_J         equ -40
+
+find_nearest_pickup:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 48
+
+    mov eax, edi
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [r10 + Soldier.x]
+    mov [rbp + FNP_MY_X], eax
+    mov eax, [r10 + Soldier.y]
+    mov [rbp + FNP_MY_Y], eax
+
+    mov dword [rbp + FNP_BEST_IDX], -1
+    mov dword [rbp + FNP_BEST_DIST], 0x7FFFFFFF
+
+    mov dword [rbp + FNP_J], 0
+.scan_loop:
+    mov eax, [rbp + FNP_J]
+    cmp eax, MAX_PICKUPS
+    jge .scan_done
+
+    imul eax, Pickup_size
+    lea r10, [pickups]
+    add r10, rax
+
+    cmp dword [r10 + Pickup.active], 0
+    je .scan_next
+
+    mov eax, [r10 + Pickup.x]
+    sub eax, [rbp + FNP_MY_X]
+    imul eax, eax
+    mov ecx, eax
+    mov eax, [r10 + Pickup.y]
+    sub eax, [rbp + FNP_MY_Y]
+    imul eax, eax
+    add ecx, eax
+
+    cmp ecx, [rbp + FNP_BEST_DIST]
+    jge .scan_next
+    mov [rbp + FNP_BEST_DIST], ecx
+    mov eax, [rbp + FNP_J]
+    mov [rbp + FNP_BEST_IDX], eax
+
+.scan_next:
+    mov eax, [rbp + FNP_J]
+    inc eax
+    mov [rbp + FNP_J], eax
+    jmp .scan_loop
+.scan_done:
+    mov eax, [rbp + FNP_BEST_IDX]
+    mov rsp, rbp
+    pop rbp
+    ret
+
+
+; int get_weapon_range_sq(int weapon: edi) -> eax
+get_weapon_range_sq:
+    cmp edi, WEAPON_KNIFE
+    jne .not_knife
+    mov eax, CONTACT_RANGE * CONTACT_RANGE
+    ret
+.not_knife:
+    cmp edi, WEAPON_PISTOL
+    jne .not_pistol
+    mov eax, PISTOL_RANGE * PISTOL_RANGE
+    ret
+.not_pistol:
+    mov eax, SHOTGUN_RANGE * SHOTGUN_RANGE
+    ret
+
+
+; void drop_weapon(int x: edi, int y: esi, int type: edx)
+drop_weapon:
+    push rbx
+    xor ebx, ebx
+.dw_loop:
+    cmp ebx, MAX_PICKUPS
+    jge .dw_done
+
+    mov eax, ebx
+    imul eax, Pickup_size
+    lea r10, [pickups]
+    add r10, rax
+    cmp dword [r10 + Pickup.active], 0
+    jne .dw_next
+
+    mov [r10 + Pickup.x], edi
+    mov [r10 + Pickup.y], esi
+    mov [r10 + Pickup.type], edx
+    mov dword [r10 + Pickup.active], 1
+    jmp .dw_done
+.dw_next:
+    inc ebx
+    jmp .dw_loop
+.dw_done:
+    pop rbx
+    ret
+
+
+; int is_box_blocked(int x: edi, int y: esi) -> eax (1 or 0)
+;
+; Tests the soldier's actual SOLDIER_SIZE x SOLDIER_SIZE body (a box
+; anchored at x,y -- matching exactly what fill_rect draws), not just
+; the bare corner point. An earlier draft (named is_point_in_obstacle)
+; tested only the point, which meant a soldier could visually overlap
+; up to SOLDIER_SIZE-1 pixels of a wall before their tracked corner
+; itself registered as blocked -- looked like walking partway through
+; solid cover. Two axis-aligned boxes overlap unless one is entirely
+; to the left/right/above/below the other; that's the four `jge`s
+; below (the standard AABB-overlap test, its usual form negated once
+; since we want "blocked" = "they DO overlap").
+;
+; Also treats anything off the SCREEN_W x SCREEN_H field as blocked,
+; not just points inside an Obstacle rect (now checking the FULL box
+; stays on-screen, same reasoning, not just its corner). Found the
+; hard way: the perpendicular side-step in update_soldiers applies a
+; raw add/sub to Soldier.x/y with no clamp of its own (unlike the
+; normal clamped-toward-goal move, which never wanders off-screen
+; because goals are always on-screen) -- with obstacle0 sitting right
+; at the top edge (y=0), a soldier repeatedly routed "up" around it
+; walked straight off the field into negative y, and fill_rect's
+; write ("row * pitch + col * 4") only clips the FAR edge, never
+; checks for a negative one, which corrupted the write address into
+; unmapped memory and segfaulted. Every side-step decision already
+; funnels through this one function, so treating the screen edge as
+; just another kind of "can't go there" fixes it at the single source
+; instead of adding a bounds check to every caller.
+is_box_blocked:
+    cmp edi, 0
+    jl .blocked
+    mov eax, edi
+    add eax, SOLDIER_SIZE
+    cmp eax, SCREEN_W
+    jg .blocked
+    cmp esi, 0
+    jl .blocked
+    mov eax, esi
+    add eax, SOLDIER_SIZE
+    cmp eax, SCREEN_H
+    jg .blocked
+    jmp .check_obstacles
+.blocked:
+    mov eax, 1
+    ret
+.check_obstacles:
+    push rbx
+    xor ebx, ebx
+.iio_loop:
+    cmp ebx, [num_obstacles]
+    jge .iio_clear
+
+    mov eax, ebx
+    imul eax, Obstacle_size
+    lea r10, [obstacles]
+    add r10, rax
+
+    ; soldier box: [edi, edi+SOLDIER_SIZE) x [esi, esi+SOLDIER_SIZE)
+    ; obstacle box: [Obstacle.x, Obstacle.x+w) x [Obstacle.y, Obstacle.y+h)
+    ; NOT overlapping (skip this obstacle) if the soldier box is
+    ; entirely left of, right of, above, or below the obstacle box
+    mov eax, edi
+    add eax, SOLDIER_SIZE
+    cmp eax, [r10 + Obstacle.x]
+    jle .iio_next                        ; soldier box entirely left of obstacle
+
+    mov eax, [r10 + Obstacle.x]
+    add eax, [r10 + Obstacle.w]
+    cmp edi, eax
+    jge .iio_next                        ; soldier box entirely right of obstacle
+
+    mov eax, esi
+    add eax, SOLDIER_SIZE
+    cmp eax, [r10 + Obstacle.y]
+    jle .iio_next                        ; soldier box entirely above obstacle
+
+    mov eax, [r10 + Obstacle.y]
+    add eax, [r10 + Obstacle.h]
+    cmp esi, eax
+    jge .iio_next                        ; soldier box entirely below obstacle
+
+    mov eax, 1
+    pop rbx
+    ret
+.iio_next:
+    inc ebx
+    jmp .iio_loop
+.iio_clear:
+    xor eax, eax
+    pop rbx
+    ret
+
+
+;
+; int is_spot_blocked(int self: edi, int x: esi, int y: edx) -> eax (1 or 0)
+;
+; Could soldier `self` stand with its box anchored at (x, y)? No if
+; is_box_blocked says so (wall or screen edge), and no if the box would
+; overlap any OTHER living soldier's box. Two SOLDIER_SIZE boxes overlap
+; exactly when both |dx| and |dy| between their corners are under
+; SOLDIER_SIZE -- the same AABB test as is_box_blocked, simplified
+; because both boxes are the same size.
+;
+; Every move in update_soldiers goes through this, and spawns never
+; overlap, so "no two living soldiers overlap" stays true for the whole
+; game. That matters: a soldier that somehow started out overlapping a
+; neighbour would find every single candidate step blocked by it.
+; Dead soldiers are skipped, so a body never blocks anyone.
+;
+; Not used by line_blocked: sight lines and wall-routing only care
+; about walls (see the note at the top of update_soldiers' .do_move).
+is_spot_blocked:
+    push rbx
+    push r12
+    push r13
+    push r14
+    sub rsp, 8                   ; keep the stack 16-byte aligned for the call
+
+    mov r12d, edi                ; self
+    mov r13d, esi                ; x
+    mov r14d, edx                ; y
+
+    mov edi, r13d
+    mov esi, r14d
+    call is_box_blocked
+    test eax, eax
+    jnz .isb_done                ; eax is already 1
+
+    xor ebx, ebx
+.isb_loop:
+    cmp ebx, TOTAL_SOLDIERS
+    jge .isb_clear
+    cmp ebx, r12d
+    je .isb_next
+
+    mov eax, ebx
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    cmp dword [r10 + Soldier.health], 0
+    jle .isb_next
+
+    mov eax, [r10 + Soldier.x]
+    sub eax, r13d
+    jns .isb_dx_ok
+    neg eax
+.isb_dx_ok:
+    cmp eax, SOLDIER_SIZE
+    jge .isb_next                ; far enough apart horizontally
+
+    mov eax, [r10 + Soldier.y]
+    sub eax, r14d
+    jns .isb_dy_ok
+    neg eax
+.isb_dy_ok:
+    cmp eax, SOLDIER_SIZE
+    jge .isb_next                ; far enough apart vertically
+
+    mov eax, 1                   ; overlaps soldier ebx
+    jmp .isb_done
+.isb_next:
+    inc ebx
+    jmp .isb_loop
+.isb_clear:
+    xor eax, eax
+.isb_done:
+    add rsp, 8
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; int line_blocked(int x0: edi, int y0: esi, int x1: edx, int y1: ecx) -> eax (1 or 0)
+; Stage3's draw_line, Bresenham step for Bresenham step -- set_pixel
+; is replaced with a call to is_box_blocked, and the walk exits
+; the moment any step is blocked instead of always visiting every
+; point on the line.
+LB_X0  equ -8
+LB_Y0  equ -16
+LB_X1  equ -24
+LB_Y1  equ -32
+LB_SX  equ -40
+LB_SY  equ -48
+LB_DX  equ -56
+LB_DY  equ -64
+LB_ERR equ -72
+
+line_blocked:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 80
+
+    mov [rbp + LB_X0], edi
+    mov [rbp + LB_Y0], esi
+    mov [rbp + LB_X1], edx
+    mov [rbp + LB_Y1], ecx
+
+    mov eax, [rbp + LB_X1]
+    sub eax, [rbp + LB_X0]
+    jns .dx_nonneg
+    neg eax
+.dx_nonneg:
+    mov [rbp + LB_DX], eax
+
+    mov eax, [rbp + LB_X0]
+    cmp eax, [rbp + LB_X1]
+    mov eax, 1
+    jl .sx_done
+    mov eax, -1
+.sx_done:
+    mov [rbp + LB_SX], eax
+
+    mov eax, [rbp + LB_Y1]
+    sub eax, [rbp + LB_Y0]
+    jns .dy_nonneg
+    neg eax
+.dy_nonneg:
+    neg eax
+    mov [rbp + LB_DY], eax
+
+    mov eax, [rbp + LB_Y0]
+    cmp eax, [rbp + LB_Y1]
+    mov eax, 1
+    jl .sy_done
+    mov eax, -1
+.sy_done:
+    mov [rbp + LB_SY], eax
+
+    mov eax, [rbp + LB_DX]
+    add eax, [rbp + LB_DY]
+    mov [rbp + LB_ERR], eax
+
+.step_loop:
+    mov edi, [rbp + LB_X0]
+    mov esi, [rbp + LB_Y0]
+    call is_box_blocked
+    test eax, eax
+    jz .not_blocked_here
+    mov eax, 1
+    mov rsp, rbp
+    pop rbp
+    ret
+.not_blocked_here:
+    mov eax, [rbp + LB_X0]
+    cmp eax, [rbp + LB_X1]
+    jne .continue_step
+    mov eax, [rbp + LB_Y0]
+    cmp eax, [rbp + LB_Y1]
+    je .lb_clear
+.continue_step:
+    mov eax, [rbp + LB_ERR]
+    add eax, eax
+
+    cmp eax, [rbp + LB_DY]
+    jl .skip_x
+    mov ecx, [rbp + LB_ERR]
+    add ecx, [rbp + LB_DY]
+    mov [rbp + LB_ERR], ecx
+    mov ecx, [rbp + LB_X0]
+    add ecx, [rbp + LB_SX]
+    mov [rbp + LB_X0], ecx
+.skip_x:
+    cmp eax, [rbp + LB_DX]
+    jg .skip_y
+    mov ecx, [rbp + LB_ERR]
+    add ecx, [rbp + LB_DX]
+    mov [rbp + LB_ERR], ecx
+    mov ecx, [rbp + LB_Y0]
+    add ecx, [rbp + LB_SY]
+    mov [rbp + LB_Y0], ecx
+.skip_y:
+    jmp .step_loop
+.lb_clear:
+    xor eax, eax
+    mov rsp, rbp
+    pop rbp
+    ret
+
+
+; void update_soldiers(void)
+; Same as stage6c/01 except `.do_move`: every candidate position is now
+; checked with is_spot_blocked (walls AND other soldiers), and a step
+; blocked by a soldier falls back to main-axis-only, then to the same
+; sticky side-step that already routes around walls.
+US_I         equ -32
+US_ACTUAL    equ -40
+US_SELF_X    equ -48
+US_SELF_Y    equ -56
+US_WEAPON    equ -64
+US_GOAL_X    equ -72
+US_GOAL_Y    equ -80
+US_IS_PICKUP equ -88
+US_PICKUP_IDX equ -96
+US_TARGET    equ -104
+US_DIST_SQ   equ -112
+US_NEG_BLOCKED equ -120
+US_POS_BLOCKED equ -128
+US_FWD_STEP  equ -136
+US_STEP_X    equ -144
+US_STEP_Y    equ -152
+US_HIT       equ -160    ; this attack's hit roll, 1 = hit (for spawn_effect)
+
+update_soldiers:
+    push rbp
+    mov rbp, rsp
+    push r12
+    push r13
+    push r14
+    sub rsp, 8
+    sub rsp, 128                ; 96 in stage6b, +16 for US_FWD_STEP (6c),
+                                ; +16 for US_STEP_X/Y. (US_HIT at -160 is the
+                                ; last slot this leaves: rbp-24 pushes, 8 pad)
+
+    call rng_next              ; per-tick random processing direction (03_combat.asm's
+    and eax, 1                    ; fair-turn-order fix) -- was missing here too, carried
+    mov [pass_reverse], eax          ; over from stage6a/04_weapons.asm's same regression
+
+    call build_fields                ; one snapshot per tick, before anyone moves
+
+    mov dword [rbp + US_I], 0
+.update_loop:
+    mov eax, [rbp + US_I]
+    cmp eax, TOTAL_SOLDIERS
+    jge .update_done
+
+    cmp dword [pass_reverse], 0
+    je .use_forward
+    mov ecx, TOTAL_SOLDIERS - 1
+    sub ecx, eax
+    jmp .have_actual
+.use_forward:
+    mov ecx, eax
+.have_actual:
+    mov [rbp + US_ACTUAL], ecx
+
+    mov eax, ecx
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    cmp dword [r10 + Soldier.health], 0
+    jle .update_next
+
+    cmp dword [r10 + Soldier.cooldown], 0
+    jle .cooldown_done
+    dec dword [r10 + Soldier.cooldown]
+.cooldown_done:
+
+    mov eax, [r10 + Soldier.x]
+    mov [rbp + US_SELF_X], eax
+    mov eax, [r10 + Soldier.y]
+    mov [rbp + US_SELF_Y], eax
+    mov eax, [r10 + Soldier.weapon]
+    mov [rbp + US_WEAPON], eax
+    mov dword [rbp + US_IS_PICKUP], 0
+
+    cmp dword [rbp + US_WEAPON], WEAPON_KNIFE
+    jne .have_enemy_only
+
+    mov edi, [rbp + US_ACTUAL]
+    call find_nearest_pickup
+    mov [rbp + US_PICKUP_IDX], eax
+
+    mov edi, [rbp + US_ACTUAL]
+    call find_nearest_enemy
+    mov [rbp + US_TARGET], eax
+
+    cmp dword [rbp + US_PICKUP_IDX], -1
+    je .no_pickup_candidate
+
+    mov eax, [rbp + US_PICKUP_IDX]
+    imul eax, Pickup_size
+    lea r10, [pickups]
+    add r10, rax
+    mov eax, [r10 + Pickup.x]
+    sub eax, [rbp + US_SELF_X]
+    imul eax, eax
+    mov ecx, eax
+    mov eax, [r10 + Pickup.y]
+    sub eax, [rbp + US_SELF_Y]
+    imul eax, eax
+    add ecx, eax
+
+    cmp dword [rbp + US_TARGET], -1
+    je .use_pickup_goal
+
+    mov eax, [rbp + US_TARGET]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [r10 + Soldier.x]
+    sub eax, [rbp + US_SELF_X]
+    imul eax, eax
+    mov edx, eax
+    mov eax, [r10 + Soldier.y]
+    sub eax, [rbp + US_SELF_Y]
+    imul eax, eax
+    add edx, eax
+
+    cmp ecx, edx
+    jl .use_pickup_goal
+    jmp .use_enemy_goal
+
+.no_pickup_candidate:
+    cmp dword [rbp + US_TARGET], -1
+    je .update_next
+    jmp .use_enemy_goal
+
+.use_pickup_goal:
+    mov dword [rbp + US_IS_PICKUP], 1
+    mov eax, [rbp + US_PICKUP_IDX]
+    imul eax, Pickup_size
+    lea r10, [pickups]
+    add r10, rax
+    mov eax, [r10 + Pickup.x]
+    mov [rbp + US_GOAL_X], eax
+    mov eax, [r10 + Pickup.y]
+    mov [rbp + US_GOAL_Y], eax
+    jmp .goal_decided
+
+.have_enemy_only:
+    mov edi, [rbp + US_ACTUAL]
+    call find_nearest_enemy
+    mov [rbp + US_TARGET], eax
+    cmp eax, -1
+    je .update_next
+
+.use_enemy_goal:
+    mov eax, [rbp + US_TARGET]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [r10 + Soldier.x]
+    mov [rbp + US_GOAL_X], eax
+    mov eax, [r10 + Soldier.y]
+    mov [rbp + US_GOAL_Y], eax
+
+.goal_decided:
+    mov eax, [rbp + US_GOAL_X]
+    sub eax, [rbp + US_SELF_X]
+    imul eax, eax
+    mov ecx, eax
+    mov eax, [rbp + US_GOAL_Y]
+    sub eax, [rbp + US_SELF_Y]
+    imul eax, eax
+    add ecx, eax
+    mov [rbp + US_DIST_SQ], ecx
+
+    cmp dword [rbp + US_IS_PICKUP], 0
+    jne .handle_pickup_goal
+    jmp .handle_enemy_goal
+
+.handle_pickup_goal:
+    mov eax, [rbp + US_DIST_SQ]
+    cmp eax, PICKUP_RADIUS * PICKUP_RADIUS
+    jg .do_move
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+
+    mov eax, [rbp + US_PICKUP_IDX]
+    imul eax, Pickup_size
+    lea r11, [pickups]
+    add r11, rax
+
+    mov eax, [r11 + Pickup.type]
+    mov [r10 + Soldier.weapon], eax
+    mov dword [r11 + Pickup.active], 0
+    jmp .update_next
+
+.handle_enemy_goal:
+    mov edi, [rbp + US_WEAPON]
+    call get_weapon_range_sq
+    cmp dword [rbp + US_DIST_SQ], eax
+    jg .do_move
+
+    ; ranged weapons need line of sight to actually fire; knife is
+    ; contact-range only, and an obstacle blocking contact would
+    ; already have blocked the movement that got here, so skip the
+    ; check for it entirely
+    mov eax, [rbp + US_WEAPON]
+    cmp eax, WEAPON_KNIFE
+    je .los_ok
+
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    mov edx, [rbp + US_GOAL_X]
+    mov ecx, [rbp + US_GOAL_Y]
+    call line_blocked
+    test eax, eax
+    jnz .do_move                   ; blocked -- can't fire, try to reposition instead
+.los_ok:
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    cmp dword [r10 + Soldier.cooldown], 0
+    jg .update_next
+
+    ; ---- ready to fire: who would the shot hit? ----
+    ; (knife: contact range, so the target is the only one it can reach)
+    cmp dword [rbp + US_WEAPON], WEAPON_KNIFE
+    je .victim_ok
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_TARGET]
+    call first_in_line
+
+    ; a teammate first in the line -> hold fire and side-step for a
+    ; clear shot. .side_step steps perpendicular to US_GOAL, which here
+    ; is the target, so it moves the soldier across the line of fire
+    mov ecx, eax
+    imul ecx, Soldier_size
+    lea rdx, [soldiers]
+    mov ecx, [rdx + rcx + Soldier.team]
+    mov r8d, [rbp + US_ACTUAL]
+    imul r8d, Soldier_size
+    cmp ecx, [rdx + r8 + Soldier.team]
+    jne .fire_clear
+    inc dword [ff_held]
+    jmp .side_step
+.fire_clear:
+    mov [rbp + US_TARGET], eax     ; from here on, "target" = whoever gets hit
+
+    ; first_in_line used r10 as scratch -- point it back at the shooter
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+.victim_ok:
+
+    mov eax, [rbp + US_WEAPON]
+    cmp eax, WEAPON_KNIFE
+    jne .not_atk_knife
+    mov r12d, KNIFE_DAMAGE
+    mov r13d, KNIFE_HIT_CHANCE
+    mov r14d, KNIFE_COOLDOWN_TICKS
+    jmp .have_atk_stats
+.not_atk_knife:
+    cmp eax, WEAPON_PISTOL
+    jne .atk_shotgun
+    mov r12d, PISTOL_DAMAGE
+    mov r13d, PISTOL_HIT_CHANCE
+    mov r14d, PISTOL_COOLDOWN_TICKS
+    jmp .have_atk_stats
+.atk_shotgun:
+    mov eax, [rbp + US_DIST_SQ]
+    cmp eax, SHOTGUN_CLOSE_RANGE * SHOTGUN_CLOSE_RANGE
+    jg .shotgun_far
+    mov r12d, SHOTGUN_CLOSE_DAMAGE
+    mov r13d, SHOTGUN_CLOSE_HIT
+    jmp .shotgun_cd
+.shotgun_far:
+    mov r12d, SHOTGUN_FAR_DAMAGE
+    mov r13d, SHOTGUN_FAR_HIT
+.shotgun_cd:
+    mov r14d, SHOTGUN_COOLDOWN_TICKS
+.have_atk_stats:
+    mov [r10 + Soldier.cooldown], r14d
+
+    call rng_next
+    xor edx, edx
+    mov ecx, 100
+    div ecx
+    xor eax, eax
+    cmp edx, r13d
+    setl al                        ; same roll as before, just kept
+    mov [rbp + US_HIT], eax
+
+    ; record the attack for the renderer -- hit or miss. Drawing only:
+    ; no RNG, no soldier state, so the fight is unchanged
+    mov edi, [rbp + US_WEAPON]
+    mov esi, [rbp + US_ACTUAL]
+    mov edx, [rbp + US_TARGET]
+    mov ecx, eax
+    call spawn_effect
+
+    cmp dword [rbp + US_HIT], 0
+    je .update_next
+
+    mov eax, [rbp + US_TARGET]
+    imul eax, Soldier_size
+    lea r11, [soldiers]
+    add r11, rax
+
+    ; tally friendly fire. r13d (the hit chance) is free after the roll,
+    ; so it holds "same team" through the kill check below
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea rcx, [soldiers]
+    mov eax, [rcx + rax + Soldier.team]
+    xor r13d, r13d
+    cmp eax, [r11 + Soldier.team]
+    jne .ff_tallied
+    mov r13d, 1
+    inc dword [ff_hits]
+.ff_tallied:
+
+    sub dword [r11 + Soldier.health], r12d
+    cmp dword [r11 + Soldier.health], 0
+    jg .update_next
+    mov dword [r11 + Soldier.health], 0
+    add [ff_kills], r13d
+
+    mov eax, [r11 + Soldier.weapon]
+    cmp eax, WEAPON_KNIFE
+    je .update_next
+
+    mov edi, [r11 + Soldier.x]
+    mov esi, [r11 + Soldier.y]
+    mov edx, eax
+    call drop_weapon
+    jmp .update_next
+
+.do_move:
+    ; ---- is the direct path to the goal clear of WALLS? ----
+    ; (line_blocked deliberately ignores soldiers: it also answers the
+    ; line-of-sight question, and a teammate standing in the line would
+    ; otherwise block every shot -- including the target itself, which
+    ; sits right at the end of the line)
+    mov edi, [rbp + US_SELF_X]
+    mov esi, [rbp + US_SELF_Y]
+    mov edx, [rbp + US_GOAL_X]
+    mov ecx, [rbp + US_GOAL_Y]
+    call line_blocked
+    test eax, eax
+    jnz .follow_field
+
+.clear_step:
+    ; ---- clear of walls: the usual step, clamped to MOVE_SPEED per axis ----
+    mov eax, [rbp + US_GOAL_X]
+    sub eax, [rbp + US_SELF_X]
+    cmp eax, MOVE_SPEED
+    jle .sx_hi_ok
+    mov eax, MOVE_SPEED
+.sx_hi_ok:
+    cmp eax, -MOVE_SPEED
+    jge .sx_lo_ok
+    mov eax, -MOVE_SPEED
+.sx_lo_ok:
+    mov [rbp + US_STEP_X], eax
+
+    mov eax, [rbp + US_GOAL_Y]
+    sub eax, [rbp + US_SELF_Y]
+    cmp eax, MOVE_SPEED
+    jle .sy_hi_ok
+    mov eax, MOVE_SPEED
+.sy_hi_ok:
+    cmp eax, -MOVE_SPEED
+    jge .sy_lo_ok
+    mov eax, -MOVE_SPEED
+.sy_lo_ok:
+    mov [rbp + US_STEP_Y], eax
+
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    add esi, [rbp + US_STEP_X]
+    mov edx, [rbp + US_SELF_Y]
+    add edx, [rbp + US_STEP_Y]
+    call is_spot_blocked
+    test eax, eax
+    jz .apply_step
+
+    ; ---- another soldier is in the way: try the MAIN axis alone ----
+    ; Only the main axis (whichever of |dx|, |dy| is larger), never the
+    ; minor one. Sliding along the minor axis is what a side-step around
+    ; the blocker would immediately undo: step up to get around someone,
+    ; then next tick the minor-axis slide pulls you straight back down
+    ; into line behind them -- stage6b's bug #5 oscillation all over
+    ; again. If the main axis is blocked too, hand off to the sticky
+    ; side-step below, which exists precisely to commit to one way round.
+    mov eax, [rbp + US_GOAL_X]
+    sub eax, [rbp + US_SELF_X]
+    jns .mx_abs_ok
+    neg eax
+.mx_abs_ok:
+    mov ecx, [rbp + US_GOAL_Y]
+    sub ecx, [rbp + US_SELF_Y]
+    jns .my_abs_ok
+    neg ecx
+.my_abs_ok:
+    cmp eax, ecx
+    jl .main_axis_y
+    mov dword [rbp + US_STEP_Y], 0
+    jmp .try_main_axis
+.main_axis_y:
+    mov dword [rbp + US_STEP_X], 0
+.try_main_axis:
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    add esi, [rbp + US_STEP_X]
+    mov edx, [rbp + US_SELF_Y]
+    add edx, [rbp + US_STEP_Y]
+    call is_spot_blocked
+    test eax, eax
+    jnz .side_step
+
+.apply_step:
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [rbp + US_STEP_X]
+    add [r10 + Soldier.x], eax
+    mov eax, [rbp + US_STEP_Y]
+    add [r10 + Soldier.y], eax
+    jmp .update_next
+
+.follow_field:
+    ; ---- a wall is in the way: head for the next cell on the flow field ----
+    ; Which field: pickups if that's the goal, else the enemy team's.
+    ; The waypoint replaces the goal, and .clear_step walks to it, with
+    ; the usual fallbacks if a soldier is standing there
+    lea rsi, [field_pk]
+    cmp dword [rbp + US_IS_PICKUP], 0
+    jne .have_field
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea rcx, [soldiers]
+    lea rsi, [field_to1]
+    cmp dword [rcx + rax + Soldier.team], 0
+    je .have_field
+    lea rsi, [field_to0]
+.have_field:
+    mov edi, [rbp + US_ACTUAL]
+    call flow_waypoint
+    test eax, eax
+    jz .side_step                  ; no closer neighbour: old behaviour
+    mov eax, [flow_wx]
+    mov [rbp + US_GOAL_X], eax
+    mov eax, [flow_wy]
+    mov [rbp + US_GOAL_Y], eax
+    jmp .clear_step
+
+.side_step:
+    ; ---- blocked (by a wall or a soldier): step perpendicular to the goal ----
+    mov eax, [rbp + US_GOAL_X]
+    sub eax, [rbp + US_SELF_X]           ; dx
+    mov ecx, [rbp + US_GOAL_Y]
+    sub ecx, [rbp + US_SELF_Y]              ; dy
+
+    mov edx, eax
+    cmp edx, 0
+    jns .dx_abs_ok
+    neg edx
+.dx_abs_ok:
+    mov r8d, ecx
+    cmp r8d, 0
+    jns .dy_abs_ok
+    neg r8d
+.dy_abs_ok:
+    cmp edx, r8d
+    jl .try_horizontal
+
+    ; goal is mostly sideways, so try stepping vertically around
+    ; whatever's in the way. Which side to try FIRST is "sticky": prefer
+    ; whichever side (up/negative or down/positive) actually worked last
+    ; time for this soldier -- see stage6b's README, bug #5, for the
+    ; permanent 2-tick oscillation that always defaulting to "up" caused.
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    mov edx, [rbp + US_SELF_Y]
+    sub edx, MOVE_SPEED
+    call is_spot_blocked
+    mov [rbp + US_NEG_BLOCKED], eax          ; "up" blocked?
+
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    mov edx, [rbp + US_SELF_Y]
+    add edx, MOVE_SPEED
+    call is_spot_blocked
+    mov [rbp + US_POS_BLOCKED], eax          ; "down" blocked?
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, [r10 + Soldier.avoid_dir]
+    test eax, eax
+    jnz .prefer_down
+
+    cmp dword [rbp + US_NEG_BLOCKED], 0
+    jne .fallback_down
+    mov dword [r10 + Soldier.avoid_dir], 0      ; up worked again -- keep preferring it
+    sub dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+.fallback_down:
+    cmp dword [rbp + US_POS_BLOCKED], 0
+    jne .update_next                               ; both blocked -- hold position
+    mov dword [r10 + Soldier.avoid_dir], 1            ; up failed, down worked -- switch preference
+    add dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+.prefer_down:
+    cmp dword [rbp + US_POS_BLOCKED], 0
+    jne .fallback_up
+    mov dword [r10 + Soldier.avoid_dir], 1
+    add dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+.fallback_up:
+    cmp dword [rbp + US_NEG_BLOCKED], 0
+    jne .update_next
+    mov dword [r10 + Soldier.avoid_dir], 0
+    sub dword [r10 + Soldier.y], MOVE_SPEED
+    jmp .update_next
+
+.try_horizontal:
+    ; Left/right is NOT the same choice for both teams the way up/down
+    ; is, so "first choice" here means FORWARD, toward the enemy's side:
+    ; +x for team 0, -x for team 1. See stage6c's README, bug #1 -- a
+    ; plain "left first" gave the team on the right 39 of 48 games.
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov eax, MOVE_SPEED
+    cmp dword [r10 + Soldier.team], 0
+    je .have_fwd_step
+    neg eax
+.have_fwd_step:
+    mov [rbp + US_FWD_STEP], eax
+
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    add esi, [rbp + US_FWD_STEP]
+    mov edx, [rbp + US_SELF_Y]
+    call is_spot_blocked
+    mov [rbp + US_NEG_BLOCKED], eax          ; "forward" blocked?
+
+    mov edi, [rbp + US_ACTUAL]
+    mov esi, [rbp + US_SELF_X]
+    sub esi, [rbp + US_FWD_STEP]
+    mov edx, [rbp + US_SELF_Y]
+    call is_spot_blocked
+    mov [rbp + US_POS_BLOCKED], eax          ; "back" blocked?
+
+    mov eax, [rbp + US_ACTUAL]
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    mov ecx, [rbp + US_FWD_STEP]
+    mov eax, [r10 + Soldier.avoid_dir]
+    test eax, eax
+    jnz .prefer_back
+
+    cmp dword [rbp + US_NEG_BLOCKED], 0
+    jne .fallback_back
+    mov dword [r10 + Soldier.avoid_dir], 0
+    add [r10 + Soldier.x], ecx
+    jmp .update_next
+.fallback_back:
+    cmp dword [rbp + US_POS_BLOCKED], 0
+    jne .update_next
+    mov dword [r10 + Soldier.avoid_dir], 1
+    sub [r10 + Soldier.x], ecx
+    jmp .update_next
+.prefer_back:
+    cmp dword [rbp + US_POS_BLOCKED], 0
+    jne .fallback_fwd
+    mov dword [r10 + Soldier.avoid_dir], 1
+    sub [r10 + Soldier.x], ecx
+    jmp .update_next
+.fallback_fwd:
+    cmp dword [rbp + US_NEG_BLOCKED], 0
+    jne .update_next
+    mov dword [r10 + Soldier.avoid_dir], 0
+    add [r10 + Soldier.x], ecx
+    jmp .update_next
+
+.update_next:
+    mov eax, [rbp + US_I]
+    inc eax
+    mov [rbp + US_I], eax
+    jmp .update_loop
+.update_done:
+    lea rsp, [rbp - 24]
+    pop r14
+    pop r13
+    pop r12
+    pop rbp
+    ret
+
+
+; int first_in_line(int shooter: edi, int target: esi) -> eax
+;
+; Who actually takes this shot: the first living soldier (not the
+; shooter) whose box contains a point on the line from the shooter's
+; centre to the target's centre. Bresenham again, as in draw_line and
+; line_blocked, but it checks every soldier's box at each point
+; instead of plotting or checking walls.
+;
+; The walk is in HALF-PIXEL units (every coordinate doubled). In whole
+; pixels, a 16px box at x has no centre pixel: x+8 is 8 pixels in from
+; the left edge but 7 from the right. Under the left-right mirror that
+; puts every team 1 line of fire 1px off the mirror image of team 0's,
+; while the boxes themselves mirror exactly. In 06, which asks this
+; ~3,300 times a game to decide whether to hold fire, team 1 won 259 of
+; 480 games with the 1px and 142-146 over 288 without it. Doubled, the
+; centre is exactly 2x + 15 and a box exactly [2x, 2x + 30], and both
+; mirror exactly. (Bresenham's steps depend only on |dx| and |dy|, so
+; the walk itself was already mirror-symmetric.)
+;
+; No calls, so the walk state lives in registers:
+;   ebx shooter    r12d target
+;   r8d/r9d  current x,y    r10d/r11d end x,y
+;   r13d/r14d sx,sy   r15d dx   edi dy (<= 0)   esi err
+; Cost: up to ~500 half-pixel points x 100 boxes per check, a few
+; thousand checks per game. Nothing at this scale.
+first_in_line:
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov ebx, edi
+    mov r12d, esi
+
+    mov eax, ebx
+    imul eax, Soldier_size
+    lea rcx, [soldiers]
+    add rcx, rax
+    ; half-pixel units: a box's true centre is 2x + SIZE - 1 (see above)
+    mov r8d, [rcx + Soldier.x]
+    lea r8d, [r8d * 2 + SOLDIER_SIZE - 1]
+    mov r9d, [rcx + Soldier.y]
+    lea r9d, [r9d * 2 + SOLDIER_SIZE - 1]
+    mov eax, r12d
+    imul eax, Soldier_size
+    lea rcx, [soldiers]
+    add rcx, rax
+    mov r10d, [rcx + Soldier.x]
+    lea r10d, [r10d * 2 + SOLDIER_SIZE - 1]
+    mov r11d, [rcx + Soldier.y]
+    lea r11d, [r11d * 2 + SOLDIER_SIZE - 1]
+
+    ; dx = |x1-x0|, sx = sign; dy = -|y1-y0|, sy = sign; err = dx + dy
+    mov r13d, 1
+    mov r15d, r10d
+    sub r15d, r8d
+    jns .fil_dx_ok
+    neg r15d
+    mov r13d, -1
+.fil_dx_ok:
+    mov r14d, 1
+    mov edi, r11d
+    sub edi, r9d
+    jns .fil_dy_ok
+    neg edi
+    mov r14d, -1
+.fil_dy_ok:
+    neg edi
+    mov esi, r15d
+    add esi, edi
+
+.fil_step:
+    xor ecx, ecx
+    lea rdx, [soldiers]
+.fil_scan:
+    cmp ecx, TOTAL_SOLDIERS
+    jge .fil_nobody
+    cmp ecx, ebx
+    je .fil_scan_next               ; the line starts inside the shooter
+    cmp dword [rdx + Soldier.health], 0
+    jle .fil_scan_next
+    ; inside the box when 0 <= X - 2*box.x <= 2*SIZE - 2 (half-pixel
+    ; units). Compared unsigned, a negative difference becomes huge, so
+    ; one jae covers both ends
+    mov eax, [rdx + Soldier.x]
+    add eax, eax
+    neg eax
+    add eax, r8d
+    cmp eax, 2 * SOLDIER_SIZE - 1
+    jae .fil_scan_next
+    mov eax, [rdx + Soldier.y]
+    add eax, eax
+    neg eax
+    add eax, r9d
+    cmp eax, 2 * SOLDIER_SIZE - 1
+    jae .fil_scan_next
+    mov eax, ecx                    ; this soldier is in the way
+    jmp .fil_done
+.fil_scan_next:
+    inc ecx
+    add rdx, Soldier_size
+    jmp .fil_scan
+
+.fil_nobody:
+    cmp r8d, r10d
+    jne .fil_advance
+    cmp r9d, r11d
+    jne .fil_advance
+    mov eax, r12d                   ; reached the end (can't really miss
+    jmp .fil_done                   ; the target's box, but just in case)
+.fil_advance:
+    lea eax, [esi + esi]            ; 2*err
+    cmp eax, edi
+    jl .fil_skip_x
+    add esi, edi
+    add r8d, r13d
+.fil_skip_x:
+    cmp eax, r15d
+    jg .fil_skip_y
+    add esi, r15d
+    add r9d, r14d
+.fil_skip_y:
+    jmp .fil_step
+
+.fil_done:
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void print_result(char* msg: rsi, int len: edx)
+;
+; Writes "<msg> (friendly fire: H hits, K kills; held fire N times)\n"
+; in ONE write().
+; batch.sh stops a game as soon as its output file isn't empty, so
+; with more than one write it could read half a line.
+print_result:
+    push rbx
+    lea rdi, [msg_buf]
+    call append_bytes
+    lea rsi, [on_msg]
+    mov edx, on_msg_len
+    call append_bytes
+    call append_arena_name
+    lea rsi, [ff_msg1]
+    mov edx, ff_msg1_len
+    call append_bytes
+    mov esi, [ff_hits]
+    call append_uint
+    lea rsi, [ff_msg2]
+    mov edx, ff_msg2_len
+    call append_bytes
+    mov esi, [ff_kills]
+    call append_uint
+    lea rsi, [ff_msg3]
+    mov edx, ff_msg3_len
+    call append_bytes
+    mov esi, [ff_held]
+    call append_uint
+    lea rsi, [ff_msg4]
+    mov edx, ff_msg4_len
+    call append_bytes
+    mov esi, [ticks]
+    call append_uint
+    lea rsi, [ff_msg5]
+    mov edx, ff_msg5_len
+    call append_bytes
+    cmp dword [show_seed], 0
+    je .pr_no_seed
+    lea rsi, [seed_msg]
+    mov edx, seed_msg_len
+    call append_bytes
+    mov rsi, [game_seed]
+    call append_hex64
+.pr_no_seed:
+    lea rsi, [ff_msg6]
+    mov edx, ff_msg6_len
+    call append_bytes
+
+    lea rsi, [msg_buf]
+    mov rdx, rdi
+    sub rdx, rsi                    ; length = end - start
+    mov eax, 1                      ; write(stdout, msg_buf, len)
+    mov edi, 1
+    syscall
+    pop rbx
+    ret
+
+; append_hex64(dst: rdi, n: rsi) -> rdi = past the digits
+; "0x" and all 16 hex digits, most significant first: rotate the next
+; nibble into the bottom 4 bits, then look it up.
+append_hex64:
+    mov word [rdi], '0x'
+    add rdi, 2
+    mov ecx, 16
+.ah_loop:
+    rol rsi, 4
+    mov eax, esi
+    and eax, 0xF
+    lea rdx, [hex_digits]
+    mov al, [rdx + rax]
+    mov [rdi], al
+    inc rdi
+    dec ecx
+    jnz .ah_loop
+    ret
+
+; append_bytes(dst: rdi, src: rsi, len: edx) -> rdi = dst + len
+append_bytes:
+    mov ecx, edx
+    cld
+    rep movsb
+    ret
+
+; append_uint(dst: rdi, n: esi) -> rdi = past the last digit
+;
+; Divides by 10 repeatedly, which gives the digits last-first, so they
+; are written backwards into scratch space below rsp and then copied
+; forwards. It's a leaf function, so the 128 bytes below rsp (the
+; System V "red zone") are ours to use without moving rsp. 10 digits
+; is the most a 32-bit number needs.
+append_uint:
+    mov eax, esi
+    lea r9, [rsp - 8]               ; one past the last digit
+    mov r8, r9
+    mov ecx, 10
+.au_loop:
+    xor edx, edx
+    div ecx
+    add dl, '0'
+    dec r8
+    mov [r8], dl
+    test eax, eax
+    jnz .au_loop
+    mov rsi, r8
+    mov rcx, r9
+    sub rcx, r8
+    rep movsb
+    ret
+
+
+; void spawn_effect(int weapon: edi, int shooter: esi, int target: edx,
+;                   int hit: ecx)
+;
+; Records one attack in the effects ring buffer, overwriting the oldest
+; slot. Everything is worked out here, once, so draw_effects only has
+; to interpolate:
+;   - both endpoints are box centres (x + SOLDIER_SIZE/2)
+;   - (px, py) is perpendicular to the shot and about PELLET_SPREAD
+;     long: (-dy, dx) * SPREAD / max(|dx|, |dy|). Dividing by the
+;     larger axis instead of the true length skips the square root.
+;     The result is 1x to 1.41x too long, depending on angle, which is
+;     fine for a spread
+;   - a miss moves the aim point MISS_OFFSET spreads sideways and 25%
+;     further on, so the tracer visibly flies past. The side alternates
+;     with the slot number. It's cosmetic, so it must not call rng_next
+;     (that would change the game)
+;   - a hit keeps the target drawn until its flash ends, in case this
+;     attack killed it (death_linger)
+spawn_effect:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    mov r13d, esi               ; shooter
+    mov r14d, ecx               ; hit
+
+    mov eax, [fx_next]
+    mov ebx, eax                ; slot number, for the miss side below
+    lea ecx, [eax + 1]
+    and ecx, MAX_EFFECTS - 1
+    mov [fx_next], ecx
+    imul eax, Effect_size
+    lea r8, [effects]
+    add r8, rax
+
+    lea eax, [edi + 1]
+    mov [r8 + Effect.type], eax
+    mov dword [r8 + Effect.age], 0
+    mov [r8 + Effect.target], edx
+    mov [r8 + Effect.hit], r14d
+
+    mov eax, r13d
+    imul eax, Soldier_size
+    lea r9, [soldiers]
+    add r9, rax
+    mov eax, edx
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+
+    mov eax, [r9 + Soldier.x]
+    add eax, SOLDIER_SIZE / 2
+    mov [r8 + Effect.x0], eax
+    mov eax, [r9 + Soldier.y]
+    add eax, SOLDIER_SIZE / 2
+    mov [r8 + Effect.y0], eax
+    mov eax, [r10 + Soldier.x]
+    add eax, SOLDIER_SIZE / 2
+    mov [r8 + Effect.x1], eax
+    mov eax, [r10 + Soldier.y]
+    add eax, SOLDIER_SIZE / 2
+    mov [r8 + Effect.y1], eax
+
+    ; r11d = dx, r12d = dy
+    mov r11d, [r8 + Effect.x1]
+    sub r11d, [r8 + Effect.x0]
+    mov r12d, [r8 + Effect.y1]
+    sub r12d, [r8 + Effect.y0]
+
+    ; ecx = max(|dx|, |dy|)  (neg, then cmovs puts back the original
+    ; if negating made it negative, i.e. if it was positive)
+    mov eax, r11d
+    neg eax
+    cmovs eax, r11d
+    mov ecx, r12d
+    neg ecx
+    cmovs ecx, r12d
+    cmp ecx, eax
+    cmovl ecx, eax
+
+    mov dword [r8 + Effect.px], 0
+    mov dword [r8 + Effect.py], 0
+    test ecx, ecx
+    jz .se_perp_done            ; same centre -- no direction to be perpendicular to
+    mov eax, r12d
+    neg eax
+    imul eax, PELLET_SPREAD
+    cdq
+    idiv ecx
+    mov [r8 + Effect.px], eax
+    mov eax, r11d
+    imul eax, PELLET_SPREAD
+    cdq
+    idiv ecx
+    mov [r8 + Effect.py], eax
+.se_perp_done:
+
+    test r14d, r14d
+    jnz .se_hit
+    cmp edi, WEAPON_KNIFE
+    je .se_done                 ; a missed stab looks the same, minus the flash
+
+    mov ecx, MISS_OFFSET
+    test ebx, 1
+    jz .se_side_ok
+    neg ecx
+.se_side_ok:
+    mov eax, [r8 + Effect.px]
+    imul eax, ecx
+    add [r8 + Effect.x1], eax
+    sar r11d, 2
+    add [r8 + Effect.x1], r11d
+    mov eax, [r8 + Effect.py]
+    imul eax, ecx
+    add [r8 + Effect.y1], eax
+    sar r12d, 2
+    add [r8 + Effect.y1], r12d
+    jmp .se_done
+
+.se_hit:
+    ; linger through arrival + flash, +1 because the soldier loop
+    ; counts down in the frame before draw_effects starts the flash
+    mov ecx, BULLET_TRAVEL + FLASH_FRAMES + 1
+    cmp edi, WEAPON_KNIFE
+    jne .se_have_linger
+    mov ecx, KNIFE_PEAK + FLASH_FRAMES + 1
+.se_have_linger:
+    mov eax, [r8 + Effect.target]   ; not edx: cdq/idiv above clobbered it
+    lea r9, [death_linger]
+    cmp [r9 + rax*4], ecx
+    jge .se_done                ; an earlier shot already set a longer one
+    mov [r9 + rax*4], ecx
+
+.se_done:
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void draw_effects(void)
+;
+; Draws every live effect into the back buffer, then ages it one
+; frame. It runs once per rendered frame, not per update tick, so
+; effects still finish after game_over stops the updates.
+;
+; Every line is "tail to head" along the path from (X0,Y0) to
+; (X1,Y1), with both ends given as fractions TN/DEN and HN/DEN:
+;   tracer: head = (age+1)/TRAVEL, tail TRACER_TAIL behind -> it flies
+;   knife:  head = f/PEAK, f going 0..PEAK..0, tail KNIFE_BLADE behind
+;           -> the blade slides out and back
+; .emit_line and .set_endpoints are small subroutines that share this
+; function's rbp frame, since they need its locals. (A `call` to a
+; local label is just a call. rbp doesn't move, so [rbp + DE_*] still
+; points at the same slots.)
+DE_KMIN  equ -32     ; pellet range: k = KMIN..KMAX, aim = (x1,y1) + k*(px,py)
+DE_KMAX  equ -40
+DE_X0    equ -48
+DE_Y0    equ -56
+DE_X1    equ -64
+DE_Y1    equ -72
+DE_TN    equ -80
+DE_HN    equ -88
+DE_DEN   equ -96
+DE_COLOR equ -104
+DE_SIZE  equ -112
+DE_TX    equ -120
+DE_TY    equ -128
+DE_HX    equ -136
+
+draw_effects:
+    push rbp
+    mov rbp, rsp
+    push rbx
+    push r12
+    push r13
+    sub rsp, 8 + 112            ; keeps rsp 16-byte aligned for calls
+
+    xor ebx, ebx
+.de_loop:
+    cmp ebx, MAX_EFFECTS
+    jge .de_done
+    mov eax, ebx
+    imul eax, Effect_size
+    lea r12, [effects]
+    add r12, rax
+
+    mov eax, [r12 + Effect.type]
+    test eax, eax
+    jz .de_next
+    cmp eax, FX_KNIFE
+    je .de_knife
+
+    ; ---- pistol: one tracer. shotgun: three, k = -1, 0, +1 ----
+    mov dword [rbp + DE_KMIN], 0
+    mov dword [rbp + DE_KMAX], 0
+    mov dword [rbp + DE_COLOR], COLOR_TRACER
+    cmp eax, FX_SHOTGUN
+    jne .de_have_k
+    mov dword [rbp + DE_KMIN], -1
+    mov dword [rbp + DE_KMAX], 1
+    mov dword [rbp + DE_COLOR], COLOR_PELLET
+.de_have_k:
+
+    mov eax, [r12 + Effect.age]
+    cmp eax, BULLET_TRAVEL
+    jge .de_impact
+
+    lea ecx, [eax + 1]
+    mov [rbp + DE_HN], ecx
+    sub ecx, TRACER_TAIL
+    jns .de_tail_ok
+    xor ecx, ecx                ; tail can't start behind the shooter
+.de_tail_ok:
+    mov [rbp + DE_TN], ecx
+    mov dword [rbp + DE_DEN], BULLET_TRAVEL
+
+    mov r13d, [rbp + DE_KMIN]
+.de_tracer_loop:
+    call .set_endpoints
+    call .emit_line
+    inc r13d
+    cmp r13d, [rbp + DE_KMAX]
+    jle .de_tracer_loop
+    jmp .de_age
+
+.de_impact:
+    cmp dword [r12 + Effect.hit], 0
+    je .de_age                  ; a miss just flies off: no spark
+
+    cmp eax, BULLET_TRAVEL
+    jne .de_no_flash
+    call .start_flash           ; the frame the tracer arrives
+.de_no_flash:
+    mov dword [rbp + DE_SIZE], 5
+    cmp dword [r12 + Effect.age], BULLET_TRAVEL + IMPACT_FRAMES / 2
+    jl .de_have_size
+    mov dword [rbp + DE_SIZE], 3        ; spark shrinks for its second half
+.de_have_size:
+    mov r13d, [rbp + DE_KMIN]
+.de_spark_loop:
+    call .set_endpoints
+    lea rdi, [back_fb]
+    mov eax, [rbp + DE_SIZE]
+    shr eax, 1
+    mov esi, [rbp + DE_X1]
+    sub esi, eax
+    mov edx, [rbp + DE_Y1]
+    sub edx, eax
+    mov ecx, [rbp + DE_SIZE]
+    mov r8d, ecx
+    mov r9d, COLOR_SPARK
+    call fill_rect
+    inc r13d
+    cmp r13d, [rbp + DE_KMAX]
+    jle .de_spark_loop
+    jmp .de_age
+
+    ; ---- knife: f = age up to PEAK, then back down ----
+.de_knife:
+    mov eax, [r12 + Effect.age]
+    cmp eax, KNIFE_PEAK
+    jle .de_have_f
+    mov ecx, KNIFE_LIFE
+    sub ecx, eax
+    mov eax, ecx
+.de_have_f:
+    mov [rbp + DE_HN], eax
+    sub eax, KNIFE_BLADE
+    jns .de_blade_ok
+    xor eax, eax
+.de_blade_ok:
+    mov [rbp + DE_TN], eax
+    mov dword [rbp + DE_DEN], KNIFE_PEAK
+    mov dword [rbp + DE_COLOR], COLOR_BLADE
+
+    xor r13d, r13d
+    call .set_endpoints
+    call .emit_line
+
+    ; draw it again 1px over to make it 2px thick: step across the
+    ; blade, so y for a mostly-horizontal stab, x for a mostly-vertical one
+    mov eax, [rbp + DE_X1]
+    sub eax, [rbp + DE_X0]
+    mov ecx, eax
+    neg ecx
+    cmovs ecx, eax              ; ecx = |dx|
+    mov eax, [rbp + DE_Y1]
+    sub eax, [rbp + DE_Y0]
+    mov edx, eax
+    neg edx
+    cmovs edx, eax              ; edx = |dy|
+    cmp ecx, edx
+    jl .de_thick_x
+    inc dword [rbp + DE_Y0]
+    inc dword [rbp + DE_Y1]
+    jmp .de_thick_draw
+.de_thick_x:
+    inc dword [rbp + DE_X0]
+    inc dword [rbp + DE_X1]
+.de_thick_draw:
+    call .emit_line
+
+    cmp dword [r12 + Effect.age], KNIFE_PEAK
+    jne .de_age
+    cmp dword [r12 + Effect.hit], 0
+    je .de_age
+    call .start_flash           ; the frame the blade reaches its target
+
+.de_age:
+    mov eax, [r12 + Effect.age]
+    inc eax
+    mov [r12 + Effect.age], eax
+    mov ecx, BULLET_LIFE
+    cmp dword [r12 + Effect.type], FX_KNIFE
+    jne .de_have_life
+    mov ecx, KNIFE_LIFE
+.de_have_life:
+    cmp eax, ecx
+    jl .de_next
+    mov dword [r12 + Effect.type], 0    ; done -- free the slot
+
+.de_next:
+    inc ebx
+    jmp .de_loop
+
+.de_done:
+    add rsp, 8 + 112
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+
+; ---- local subroutines, sharing draw_effects' frame ----
+
+; X0,Y0 = attacker centre; X1,Y1 = aim point + k*(px,py), k in r13d
+.set_endpoints:
+    mov eax, [r12 + Effect.x0]
+    mov [rbp + DE_X0], eax
+    mov eax, [r12 + Effect.y0]
+    mov [rbp + DE_Y0], eax
+    mov eax, [r12 + Effect.px]
+    imul eax, r13d
+    add eax, [r12 + Effect.x1]
+    mov [rbp + DE_X1], eax
+    mov eax, [r12 + Effect.py]
+    imul eax, r13d
+    add eax, [r12 + Effect.y1]
+    mov [rbp + DE_Y1], eax
+    ret
+
+.start_flash:
+    mov eax, [r12 + Effect.target]
+    lea rcx, [hit_flash]
+    mov dword [rcx + rax*4], FLASH_FRAMES
+    ret
+
+; line from TN/DEN to HN/DEN of the way along (X0,Y0)->(X1,Y1)
+.emit_line:
+    sub rsp, 8                  ; the call here pushed 8; realign
+    mov edi, [rbp + DE_X0]
+    mov esi, [rbp + DE_X1]
+    mov edx, [rbp + DE_TN]
+    mov ecx, [rbp + DE_DEN]
+    call lerp
+    mov [rbp + DE_TX], eax
+    mov edi, [rbp + DE_Y0]
+    mov esi, [rbp + DE_Y1]
+    mov edx, [rbp + DE_TN]
+    mov ecx, [rbp + DE_DEN]
+    call lerp
+    mov [rbp + DE_TY], eax
+    mov edi, [rbp + DE_X0]
+    mov esi, [rbp + DE_X1]
+    mov edx, [rbp + DE_HN]
+    mov ecx, [rbp + DE_DEN]
+    call lerp
+    mov [rbp + DE_HX], eax
+    mov edi, [rbp + DE_Y0]
+    mov esi, [rbp + DE_Y1]
+    mov edx, [rbp + DE_HN]
+    mov ecx, [rbp + DE_DEN]
+    call lerp
+    mov r8d, eax                ; head y
+    mov ecx, [rbp + DE_HX]
+    mov edx, [rbp + DE_TY]
+    mov esi, [rbp + DE_TX]
+    lea rdi, [back_fb]
+    mov r9d, [rbp + DE_COLOR]
+    call draw_line
+    add rsp, 8
+    ret
+
+
+; int lerp(int a: edi, int b: esi, int n: edx, int d: ecx)
+;   -> eax = a + (b - a) * n / d   (signed, truncating)
+lerp:
+    mov eax, esi
+    sub eax, edi
+    imul eax, edx
+    cdq
+    idiv ecx
+    add eax, edi
+    ret
+
+
+; int check_win(void) -> eax: 0 = ongoing, 1 = team 0 wins, 2 = team 1 wins
+check_win:
+    push rbx
+    push r12
+    xor ebx, ebx
+    xor r12d, r12d
+    xor ecx, ecx
+.cw_loop:
+    cmp ecx, TOTAL_SOLDIERS
+    jge .cw_done
+
+    mov eax, ecx
+    imul eax, Soldier_size
+    lea r10, [soldiers]
+    add r10, rax
+    cmp dword [r10 + Soldier.health], 0
+    jle .cw_next
+
+    mov eax, [r10 + Soldier.team]
+    test eax, eax
+    jnz .cw_team1
+    inc ebx
+    jmp .cw_next
+.cw_team1:
+    inc r12d
+.cw_next:
+    inc ecx
+    jmp .cw_loop
+.cw_done:
+    xor eax, eax
+    test ebx, ebx
+    jnz .check_t1
+    mov eax, 2
+    jmp .cw_return
+.check_t1:
+    test r12d, r12d
+    jnz .cw_return
+    mov eax, 1
+.cw_return:
+    pop r12
+    pop rbx
+    ret
+
+
+; void set_pixel(FrameBuffer* fb: rdi, int x: esi, int y: edx, u32 color: ecx)
+set_pixel:
+    cmp esi, 0
+    jl .done
+    cmp esi, [rdi + FrameBuffer.w]
+    jge .done
+    cmp edx, 0
+    jl .done
+    cmp edx, [rdi + FrameBuffer.h]
+    jge .done
+    mov eax, edx
+    imul eax, [rdi + FrameBuffer.pitch]
+    lea eax, [eax + esi*4]
+    mov r10, [rdi + FrameBuffer.pixels]
+    mov dword [r10 + rax], ecx
+.done:
+    ret
+
+
+; void fill_rect(FrameBuffer* fb: rdi, int x: esi, int y: edx,
+;                int w: ecx, int h: r8d, u32 color: r9d)
+fill_rect:
+    push rbx
+    push r12
+    push r13
+    push r14
+
+    mov r10, [rdi + FrameBuffer.pixels]
+    mov r11d, [rdi + FrameBuffer.pitch]
+    mov ebx, [rdi + FrameBuffer.w]
+    mov r12d, [rdi + FrameBuffer.h]
+
+    mov r13d, esi
+    add r13d, ecx
+    cmp r13d, ebx
+    jle .x_end_ok
+    mov r13d, ebx
+.x_end_ok:
+
+    mov r14d, edx
+    add r14d, r8d
+    cmp r14d, r12d
+    jle .y_end_ok
+    mov r14d, r12d
+.y_end_ok:
+
+    ; clip the left and top edges too (the ends are already computed
+    ; from the unclipped start, above). Without this a negative x
+    ; writes into the previous row, and a negative y writes before the
+    ; start of the buffer
+    test esi, esi
+    jns .x_start_ok
+    xor esi, esi
+.x_start_ok:
+    test edx, edx
+    jns .y_start_ok
+    xor edx, edx
+.y_start_ok:
+
+.row_loop:
+    cmp edx, r14d
+    jge .done
+    mov eax, edx
+    imul eax, r11d
+    mov ecx, esi
+.col_loop:
+    cmp ecx, r13d
+    jge .row_done
+    lea r8d, [eax + ecx*4]
+    mov dword [r10 + r8], r9d
+    inc ecx
+    jmp .col_loop
+.row_done:
+    inc edx
+    jmp .row_loop
+.done:
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    ret
+
+
+; void draw_line(FrameBuffer* fb: rdi, int x0: esi, int y0: edx,
+;                int x1: ecx, int y1: r8d, u32 color: r9d)
+;
+; Bresenham's line algorithm, integer-only. Copied unchanged from
+; stage3/03_line_and_scene.asm. Named stack locals
+; (rbp-relative) instead of registers, since this function's own
+; loop calls set_pixel repeatedly and memory survives a `call`
+; without needing callee-saved juggling for ~9 live values.
+L_FB    equ -8
+L_X0    equ -16
+L_Y0    equ -24
+L_X1    equ -32
+L_Y1    equ -40
+L_SX    equ -48
+L_SY    equ -56
+L_DX    equ -64
+L_DY    equ -72
+L_ERR   equ -80
+L_COLOR equ -88
+
+draw_line:
+    push rbp
+    mov rbp, rsp
+    sub rsp, 96
+
+    mov [rbp + L_FB], rdi
+    mov [rbp + L_X0], esi
+    mov [rbp + L_Y0], edx
+    mov [rbp + L_X1], ecx
+    mov [rbp + L_Y1], r8d
+    mov [rbp + L_COLOR], r9d
+
+    ; dx = abs(x1 - x0)
+    mov eax, [rbp + L_X1]
+    sub eax, [rbp + L_X0]
+    jns .dx_nonneg
+    neg eax
+.dx_nonneg:
+    mov [rbp + L_DX], eax
+
+    ; sx = (x0 < x1) ? 1 : -1
+    mov eax, [rbp + L_X0]
+    cmp eax, [rbp + L_X1]
+    mov eax, 1
+    jl .sx_done
+    mov eax, -1
+.sx_done:
+    mov [rbp + L_SX], eax
+
+    ; dy = -abs(y1 - y0)
+    mov eax, [rbp + L_Y1]
+    sub eax, [rbp + L_Y0]
+    jns .dy_nonneg
+    neg eax
+.dy_nonneg:
+    neg eax
+    mov [rbp + L_DY], eax
+
+    ; sy = (y0 < y1) ? 1 : -1
+    mov eax, [rbp + L_Y0]
+    cmp eax, [rbp + L_Y1]
+    mov eax, 1
+    jl .sy_done
+    mov eax, -1
+.sy_done:
+    mov [rbp + L_SY], eax
+
+    ; err = dx + dy
+    mov eax, [rbp + L_DX]
+    add eax, [rbp + L_DY]
+    mov [rbp + L_ERR], eax
+
+.plot_loop:
+    mov rdi, [rbp + L_FB]
+    mov esi, [rbp + L_X0]
+    mov edx, [rbp + L_Y0]
+    mov ecx, [rbp + L_COLOR]
+    call set_pixel
+
+    mov eax, [rbp + L_X0]
+    cmp eax, [rbp + L_X1]
+    jne .continue_loop
+    mov eax, [rbp + L_Y0]
+    cmp eax, [rbp + L_Y1]
+    je .plot_done
+.continue_loop:
+    mov eax, [rbp + L_ERR]
+    add eax, eax                    ; eax = 2*err
+
+    cmp eax, [rbp + L_DY]
+    jl .skip_x
+    mov ecx, [rbp + L_ERR]
+    add ecx, [rbp + L_DY]
+    mov [rbp + L_ERR], ecx
+    mov ecx, [rbp + L_X0]
+    add ecx, [rbp + L_SX]
+    mov [rbp + L_X0], ecx
+.skip_x:
+    cmp eax, [rbp + L_DX]
+    jg .skip_y
+    mov ecx, [rbp + L_ERR]
+    add ecx, [rbp + L_DX]
+    mov [rbp + L_ERR], ecx
+    mov ecx, [rbp + L_Y0]
+    add ecx, [rbp + L_SY]
+    mov [rbp + L_Y0], ecx
+.skip_y:
+    jmp .plot_loop
+
+.plot_done:
+    mov rsp, rbp
+    pop rbp
+    ret
+
+; ------------------------------------------------------------
+; Build and run:
+;   make
+;   ./build/11_scoreboard                     # windowed, random arena
+;   ARENA=5 ./build/11_scoreboard             # Zigzag
+;   HEADLESS=1 SEED=0x1234 ./build/11_scoreboard
+;   STAGGER=0 ./batch.sh 48                   # headless, 4 at a time
+;
+; Questions to answer by experimenting:
+;   - Add a glyph for '/' and show "BLUE 37/50". Which GLYPH_BLANK line
+;     does it replace, and what does the build say if you put it in
+;     the wrong place?
+;   - draw_text makes one fill_rect call per lit font pixel. Count the
+;     calls for "ZIGZAG 0:11". Would drawing whole rows with one call
+;     each be worth the extra code?
+;   - Set FONT_SCALE to 3. What else has to change for the text to fit
+;     the strip?
+; ------------------------------------------------------------

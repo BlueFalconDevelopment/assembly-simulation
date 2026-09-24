@@ -686,3 +686,54 @@ of 1,756 ticks (09: 2,100, with a stalemate and a 99th percentile of
 
 Cost: a Zigzag game takes about 0.27s headless. Pass 2 only runs for
 soldiers whose straight line is blocked by a wall.
+
+## `11_scoreboard.asm` — scoreboard in a hand-made pixel font
+
+A 24px strip under the field:
+
+```
+BLUE 37            ZIGZAG   0:11            RED 39
+```
+
+It shows the living soldiers per team (in team colours), the arena
+and the game clock (`ticks / 60`, as m:ss). Once the game is over,
+the middle shows `RED WINS` or `BLUE WINS` in the winner's colour.
+
+**A strip, not an overlay.** Walls touch the top edge in Divide and
+Zigzag, and soldiers fight right up to every edge, so text on top of
+the field would hide the fight. Instead the window grows to 800×624
+(`WINDOW_H = SCREEN_H + HUD_H`). Only five things change: the
+window, the texture, the blit loop, the frame buffer's height and
+the size of `back_buffer`. Everything in the game still uses
+`SCREEN_H = 600`, so nothing moves. The strip is drawn last, so it
+also covers any impact spark that lands just below the field. The
+taller frame buffer means `fill_rect` no longer clips those at y=600.
+
+**The font.** 5×7, hand-made, one glyph per ASCII code from `' '` to
+`'Z'`. Each row is a byte with bit 4 as the leftmost pixel, written in
+binary so the source looks like the letter:
+
+```nasm
+    GLYPH 'R', 11110b, 10001b, 10001b, 11110b, 10100b, 10010b, 10001b
+```
+
+A `GLYPH` / `GLYPH_BLANK` macro pair checks at build time that the
+table stays in ASCII order, so a glyph in the wrong slot is a build
+error, not the wrong letter on screen. `draw_text` uppercases, looks
+up each character's 7 bytes, and turns every set bit into a 2×2
+`fill_rect` (`FONT_SCALE`). Characters are 12px apart: 5 columns
+plus one blank, times 2.
+
+`append_uint` (from 05) builds the numbers, and `append_arena_name`
+(07) the name, into `hud_buf`. A `DRAW_HUD_BUF` macro measures the
+string (`len × 12 − 2` px) and left-aligns, right-aligns or centres
+it.
+
+**Drawing only.** Like 04's effects, `draw_hud` only reads
+`soldiers`, `ticks` and `game_over`, and writes nothing but pixels.
+Checked the same way as 04: with fixed seeds (4242 on Zigzag, 77 on
+Pillars, 0x9e3779b9 on Trenches), windowed 10 and 11 ended with
+byte-identical `soldiers`, `pickups`, `rng_state` and `ticks`.
+Checked visually from gdb frame dumps: mid-game (`BLUE 37 … ZIGZAG
+0:11 … RED 39`) and after the win (`RED WINS`, `BLUE 0`, `RED 21`).
+A headless sanity batch: 23–25, 0 stuck, 0 crashed.
