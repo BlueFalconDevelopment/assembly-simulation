@@ -134,12 +134,13 @@ byte.
 
 ## Write-ups
 
-The whole journey, bugs included, is written up as a three-part blog
+The whole journey, bugs included, is written up as a four-part blog
 series:
 
 1. [Bare Metal Deathmatch: Teaching Myself x86-64 Assembly From Scratch](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch/) (Stages 0–6b)
 2. [Bare Metal Deathmatch II: Fifty a Side, and a Coin That Kept Landing Heads](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch-2/) (6c, 7.01–7.02)
 3. [Bare Metal Deathmatch III: Tracers, Friendly Fire, and a Box With No Middle](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch-3/) (7.03–7.06)
+4. [Bare Metal Deathmatch IV: Walls as Data, and a Game With No Window](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch-4/) (7.07–7.08)
 
 ## The stack
 

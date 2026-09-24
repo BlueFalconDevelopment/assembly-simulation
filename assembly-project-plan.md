@@ -17,7 +17,7 @@
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
-- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app). Published posts are `src/content/blog/bare-metal-deathmatch{,-2,-3}.mdx`, covering 0–6b, 6c–7.02 and 7.03–7.06. The drafts are in `newPOSTS/` (committed). A published post is adapted from its draft into the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top with a video the user picks. Check it with `npm run build`.
+- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app). Published posts are `src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`, covering 0–6b, 6c–7.02, 7.03–7.06 and 7.07–7.08. The drafts are in `newPOSTS/` (committed). A published post is adapted from its draft into the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top with a video the user picks. Check it with `npm run build`.
 
 **How we work (keep doing this):**
 - **One change = one new numbered file** in `stage7/` (copy the latest, add a header comment block, update `title` and the "Build and run" footer). Document it as a new section in `stage7/README.md`, and update the table above.
@@ -37,7 +37,7 @@
 2. **On-screen scoreboard in a hand-made pixel font.** `append_uint` (in 05/06) already turns numbers into digits.
 3. **Push the soldier count** using headless mode (done in 7.08). `first_in_line` (every box × every point) will be the first hotspot.
 4. Weapons scattering a little when dropped on death.
-5. When there's enough material: a Part 4 blog post (draft in `newPOSTS/`, then `bare-metal-deathmatch-4.mdx`).
+5. When there's enough material: a Part 5 blog post (draft in `newPOSTS/`, then `bare-metal-deathmatch-5.mdx`).
 
 ### Traps to avoid (hard-won)
 
