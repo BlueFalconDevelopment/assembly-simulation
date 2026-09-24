@@ -2,7 +2,7 @@
 
 ## Status (as of 2026-09-24) — read this first when picking the project back up
 
-**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has eight post-roadmap steps. **Latest build: `stage7/08_headless.asm`** (~3,000 lines). Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
+**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has nine post-roadmap steps. **Latest build: `stage7/09_pathfinding.asm`** (~3,550 lines). Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
 
 | Step | File | Result |
 |---|---|---|
@@ -14,6 +14,7 @@
 | 7.06 | `06_hold_fire` | a soldier side-steps instead of firing through a teammate: 0 friendly fire, 142–146 over 288 games |
 | 7.07 | `07_arenas` | 5 mirrored wall layouts (Divide, Pillars, Crossroads, Trenches, Outposts), random or `ARENA=n`: 371–349 over 720 games |
 | 7.08 | `08_headless` | `HEADLESS=1`: no window, no frame cap, 0.16s per game (48-game batch in 2.7s). Tick count in the win line, stalemate at 30,000 ticks. 2,400 games: 1,225–1,162, 13 stalemates on Pillars/Crossroads/Outposts |
+| 7.09 | `09_pathfinding` | flow-field BFS on a 9px mirror-exact grid, `SEED=n` replay, pickup radius 15→24 (fixed a deadlock), Zigzag back as arena 5: 1,950–1,889 over 3,840 games, 1 stalemate |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
@@ -32,7 +33,7 @@
 
 ### Next steps (the user picks)
 
-1. **Flow-field pathfinding** (grid BFS), so soldiers can handle maze-like arenas. The greedy side-step stalls on long walls in series (see 7.07's Zigzag), and 0.5% of games still stalemate on open arenas (7.08). Measure with 480+ headless games per arena. Watch mirror fairness in the BFS neighbour order.
+1. **Soldier-aware movement at chokepoints.** The flow field routes around walls, not soldiers. 1 Zigzag game in 1,440 still jams (see 7.09). Replay it with `SEED=0xc0700c12d9c1b47d ARENA=5`.
 1. **Smarter hold-fire repositioning:** step back, or retarget an enemy with a clear line, instead of only side-stepping.
 2. **On-screen scoreboard in a hand-made pixel font.** `append_uint` (in 05/06) already turns numbers into digits.
 3. **Push the soldier count** using headless mode (done in 7.08). `first_in_line` (every box × every point) will be the first hotspot.

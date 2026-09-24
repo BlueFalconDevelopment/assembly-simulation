@@ -508,3 +508,121 @@ Outposts ran all 30,000 ticks. 07's 48-game batches with a 180s
 the rest as clean. This is the slow endgame wandering described in
 07. Pathfinding is the fix, and headless batches are now fast
 enough to measure it properly.
+
+## `09_pathfinding.asm` — flow-field pathfinding
+
+Until now a soldier whose straight line to its goal hit a wall
+side-stepped perpendicular and hoped. 07 and 08 showed where that
+fails: mazes like Zigzag, and about 0.5% of games on open maps where
+the last few soldiers wander along walls forever. Now a blocked
+soldier follows a **flow field**.
+
+**The grid.** Cells are 9px square, over soldier *corner* positions.
+Once per game, `build_walkable` marks each cell where a soldier could
+stand *anywhere* inside it without touching a wall: one rectangle
+test, the cell's corner range grown by `SOLDIER_SIZE`. Being that
+strict means a soldier moving between walkable cells can't clip a
+wall whatever pixel it's on.
+
+**The fields.** Every tick, before anyone moves, `build_fields` runs
+three breadth-first searches over the walkable cells:
+`field_to0` / `field_to1` (distance to the nearest living soldier of
+each team) and `field_pk` (distance to the nearest pickup). When
+`line_blocked` says a soldier can't walk straight to its goal,
+`flow_waypoint` picks the closest of the 8 cells around its own
+(diagonals only if both cells they cut past are walkable), and the
+soldier walks to that cell's centre using the normal step code. The
+old sticky side-step is now just the fallback for when no neighbour
+is closer.
+
+**Mirror fairness**, the thing every earlier stage tripped over:
+
+- **Cells are 9px, not 8.** Corners run x = 0..784, which is 785
+  positions, an odd number. With cell k covering `[9k-8, 9k]`, cell k
+  mirrors exactly onto cell 88−k because 784 + 8 is a multiple of 9.
+  An even cell width can't have a cell centred on the mirror line, so
+  no even width works. An assembler check enforces it.
+- **BFS distances don't depend on visiting order,** only on the grid,
+  and the grid is symmetric (checked in Python for every arena).
+- **Ties between equally close neighbours go "forward"** (toward the
+  enemy) first, like the side-step since 6c.
+
+**Checked against Python.** A gdb dump right after `build_fields`, at
+two different ticks: the walkable grid and all three fields matched
+a Python BFS cell for cell.
+
+**Cost:** a headless game went from ~0.16s to ~0.18s. Three BFS
+passes over 5,874 cells per tick is cheap next to `first_in_line`.
+
+### A 1-in-250 lean that wasn't real
+
+The first 480-game run had Crossroads at **271–208** for blue, about
+2.9 standard deviations and roughly a 1-in-250 chance if fair.
+Crossroads had leaned blue before, too (79–65 in 07, 254–222 in 08).
+A code review of the new code found nothing asymmetric. A side-swap
+test through gdb came out 243–237, but it wasn't a clean test: the
+forward tie-break belongs to the team, not the side, so swapping
+sides broke the mirror. It proved nothing either way. A fresh
+sample, fixed in advance at 2,400 games, settled it: **1,195–1,198**.
+With 5 arenas tested, one 1-in-250 result isn't that surprising.
+
+### Replaying stalemates: `SEED=n`
+
+Pathfinding cut stalemates from 13 to 4 in 2,400 games, but hunting
+the rest with fixed seeds in gdb found none in 800 tries. So the game
+now takes `SEED=n` (decimal or `0x` hex, via `strtoull`) to replay a
+game exactly, and a stalemate line ends with the seed it started
+from:
+
+```
+Stalemate on Crossroads! (friendly fire: 0 hits, 0 kills; held fire 5327 times; 30000 ticks; seed 0xe05f207784eec9a0)
+```
+
+`append_hex64` prints it: rotate the next nibble into the bottom 4
+bits, look it up in `"0123456789abcdef"`.
+
+### Bug: a pickup nobody could reach
+
+Replaying the first two stalemate seeds showed the same deadlock, on
+both teams at once. A soldier holding a shotgun stood exactly on a
+pistol pickup. Soldiers with a gun never pick anything up, and his
+knife-wielding teammates, all closer to that pickup than to any enemy,
+packed in around him trying to reach it. `PICKUP_RADIUS` was 15px,
+less than one body width (16px), so nobody else could ever get close
+enough. They shuffled 2px back and forth for 29,000 ticks.
+
+This could have happened in any version since pickups existed; it
+was just rarer than the wall wandering. **Fix:**
+`PICKUP_RADIUS = SOLDIER_SIZE + 8` (24), so anyone touching the soldier
+on the spot can grab it.
+
+### Zigzag is back
+
+07's first Zigzag (three long walls open at alternate ends, the one
+that stalemated almost every game) is arena 5, unchanged.
+
+### Verification (after the radius fix)
+
+| Arena | Games | Blue–red | Stalemates | Median ticks | Max ticks |
+|---|---|---|---|---|---|
+| Divide | 480 | 246–234 | 0 | 1,000 | 1,657 |
+| Pillars | 480 | 241–239 | 0 | 712 | 1,526 |
+| Crossroads | 480 | 234–246 | 0 | 833 | 1,468 |
+| Trenches | 480 | 245–235 | 0 | 836 | 1,451 |
+| Outposts | 480 | 249–231 | 0 | 717 | 1,334 |
+| Zigzag | 1,440 | 735–704 | 1 | 2,100 | 30,000 |
+| **Total** | **3,840** | **1,950–1,889** | **1** | | |
+
+About 1 standard deviation from even. 0 crashed, 0 friendly fire.
+Compared with 08, the five original arenas went from 13 stalemates in
+2,400 to 0. The longest game dropped from 30,000 ticks (and a 99th
+percentile as high as 9,732) to 1,657, and median games are 20–35%
+shorter.
+
+**Known limit: traffic jams.** The one Zigzag stalemate replayed as a
+jam at the end of the first wall. Every soldier got a sensible
+waypoint, but two teammates wanted to cross each other's paths 15px
+apart, each blocking the other's step, and the knife soldiers behind
+them were funnelled into the same corner. The flow field routes
+around walls, not around other soldiers. It's 1 game in 1,440 on the
+hardest map, so it stays documented for now.
