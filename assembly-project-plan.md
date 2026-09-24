@@ -20,7 +20,7 @@
 
 **How we work (keep doing this):**
 - **One change = one new numbered file** in `stage7/` (copy the latest, add a header comment block, update `title` and the "Build and run" footer). Document it as a new section in `stage7/README.md`, and update the table above.
-- **Gameplay changes:** at least 3 batches of `STAGGER=0 ./batch.sh 48 build/NN_name > out.txt 2>&1` (per-game lines go to stderr, so capture `2>&1`, and use `grep '^team 0:'` for the tally). Anything consistently one-sided means looking for a mirror asymmetry before trusting it.
+- **Gameplay changes:** at least 3 batches of `STAGGER=0 ./batch.sh 48 build/NN_name > out.txt 2>&1` (per-game lines go to stderr, so capture `2>&1`, and use `grep '^team 0:'` for the tally). Anything consistently one-sided means looking for a mirror asymmetry before trusting it. **Run batches one at a time.** `batch.sh` runs at most `JOBS` games at once (default 4, under `nice`), so a 48-game batch takes a few minutes. On 2026-09-24, 96 games at once nearly froze the desktop.
 - **Cosmetic changes:** prove they're cosmetic with the fixed-seed gdb check (below): both builds must end with byte-identical `soldiers`, `pickups` and `rng_state`.
 - **The user likes to watch:** after a change, run 3 games in the background (`for i in 1 2 3; do ./build/NN; done`, needs `DISPLAY`). The user closes each window to start the next.
 - **Commit and push only when asked.** Commit messages end with the Co-Authored-By line.

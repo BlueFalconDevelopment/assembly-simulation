@@ -2,7 +2,12 @@
 # Run N headless games in parallel and count who wins.
 #
 #   ./batch.sh [games=20] [binary=newest in build/] [timeout_s=120]
-#   STAGGER=0 ./batch.sh ...    # launch all at once (03_xorshift and later)
+#   STAGGER=0 ./batch.sh ...    # no 1s gap between launches (03_xorshift on)
+#   JOBS=8 ./batch.sh ...       # games running at once (default 4)
+#
+# At most JOBS games run at a time, at low priority (nice). Running a
+# whole 48-game batch at once -- or two batches side by side, 96 games
+# -- swamps the desktop, so a batch now takes minutes, not seconds.
 #
 # Every fairness bug in 6a/6b was invisible in a single game and only
 # showed up by counting wins over 10-20+ runs -- this does that counting
@@ -25,7 +30,7 @@ run_one() {
     tmp=$(mktemp)
     start=$(date +%s.%N)
     SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software \
-        timeout "$limit" "$bin" > "$tmp" &
+        nice -n 10 timeout "$limit" "$bin" > "$tmp" &
     pid=$!
     # the win line is the only thing the game ever prints; stop it there
     while kill -0 "$pid" 2>/dev/null && [ ! -s "$tmp" ]; do sleep 0.2; done
@@ -52,7 +57,10 @@ run_one() {
 # From 03_xorshift on, the game seeds from rdtsc instead, so STAGGER=0
 # is safe for those binaries and makes a batch take seconds, not a minute.
 stagger=${STAGGER:-1}
+max_jobs=${JOBS:-4}
 for i in $(seq "$games"); do
+    # wait for a free slot before starting the next game
+    while [ "$(jobs -rp | wc -l)" -ge "$max_jobs" ]; do wait -n; done
     run_one &
     [ "$stagger" != 0 ] && [ "$i" -lt "$games" ] && sleep 1.05
 done | tee /dev/stderr | {

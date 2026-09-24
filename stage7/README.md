@@ -13,6 +13,9 @@ make clean
 
 `batch.sh` is the stage6c harness. The only change is that it now
 defaults to the highest-numbered binary in `build/`.
+Since 7.07 it also runs at most `JOBS` games at once (default 4)
+at low priority. Launching a whole batch at once, or two side by side,
+swamped the desktop.
 
 ## `01_collision.asm` — soldiers can't overlap
 
