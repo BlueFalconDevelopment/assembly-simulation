@@ -49,7 +49,7 @@ sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
 cd assembly-simulation/stage7
 make
-./build/11_scoreboard        # random arena; ARENA=0..5 picks one
+./build/15_bighomie          # Crips vs Bloods; ./build/12_respawn for the arenas
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
@@ -99,6 +99,10 @@ In `stage7`, each numbered file is the previous one plus one change:
 | `09_pathfinding` | Flow-field pathfinding around walls; `SEED=n` replays a game; Zigzag maze arena |
 | `10_traffic` | Pathfinding also steers around other soldiers: 0 stalemates in 6,240 games |
 | `11_scoreboard` | A scoreboard under the field in a hand-made 5×7 pixel font |
+| `12_respawn` | Respawns in a safe zone, first to 200 kills wins; `RESPAWNS=n`, `LIVES=n`, `SCORE_LIMIT=n` |
+| `13_neighborhood` | A 1280×720 city neighborhood: Crips vs Bloods out of their apartment complexes, cars as low cover |
+| `14_events` | Random encounters: a police car that shoots and arrests, and a pitbull that slips its leash |
+| `15_bighomie` | A miniboss, the Big Homie, for the gang that's losing (`BOSS_AT=n`) |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

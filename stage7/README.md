@@ -737,3 +737,326 @@ byte-identical `soldiers`, `pickups`, `rng_state` and `ticks`.
 Checked visually from gdb frame dumps: mid-game (`BLUE 37 … ZIGZAG
 0:11 … RED 39`) and after the win (`RED WINS`, `BLUE 0`, `RED 21`).
 A headless sanity batch: 23–25, 0 stuck, 0 crashed.
+
+## `12_respawn.asm` — respawns, and first to 200
+
+Dead soldiers now come back, and the game is won on points: the first
+team to `SCORE_LIMIT` kills (default 200) wins.
+
+**Respawning.** A soldier who dies is back `RESPAWN_TICKS` (120,
+2 seconds) later in its own team's spawn strip. That's the same area
+it started in, which the arena macros already guarantee is wall-free
+and mirrored. The strip is "somewhat safe" in two ways:
+
+- `respawn_soldier` tries `RESPAWN_TRIES` (8) random spots in the
+  strip, skips any another soldier is standing on, and takes the one
+  whose nearest living enemy is farthest away. If all 8 are blocked,
+  it tries again next tick.
+- The soldier then gets `PROTECT_TICKS` (90, 1.5 s) of spawn
+  protection. Hits still land (and show), but do no damage. It blinks,
+  4 frames on and 4 off, while the protection lasts.
+
+It comes back as new: 100 health and a knife. Weapons are still
+conserved, because a dead soldier's gun is dropped as before.
+
+**Rules, from the environment:**
+
+| Variable | Meaning | Default |
+|---|---|---|
+| `RESPAWNS=n` | respawns per team, in total | unlimited |
+| `SCORE_LIMIT=n` | first to n kills wins; 0 = off | 200 |
+
+A team with nobody alive and no respawns coming loses, as before. So
+`RESPAWNS=10` plays until one side runs out, unless someone reaches
+200 first. With respawns unlimited *and* `SCORE_LIMIT=0`, nothing can
+end the game. Headless, it stops as a stalemate at 30,000 ticks.
+
+**Scoring.** A kill scores for the killer's team (friendly kills
+score nothing). The limit is checked at the moment of the kill, not
+at the end of the tick, so whoever gets there first wins. Both teams
+can't reach 200 in the same check, and "first" is fair because
+`update_soldiers` processes soldiers in a random direction each
+tick. `process_respawns` runs in that same direction too, so neither
+team always picks its respawn spots first. The scoreboard shows kills
+(`BLUE 134/200`; a new `/` glyph replaced one blank in the font), and
+the win line adds the score:
+
+```
+Team 0 (blue) wins on Pillars! (friendly fire: 0 hits, 0 kills; held fire 8035 times; 2270 ticks; score 200-191)
+```
+
+**`RESPAWNS=0` is the old game, exactly.** The respawn code never
+draws a random number unless a soldier actually respawns, and scoring
+changes no game state. So for 4 fixed seeds on 4 arenas, `RESPAWNS=0`
+ended byte-identical to 11 (`soldiers`, `pickups`, `rng_state`,
+`ticks`).
+
+### Verification (default rules: unlimited respawns, first to 200)
+
+| Arena | Blue–red (480) | Stalemates | Median ticks | Longest | Loser's median score |
+|---|---|---|---|---|---|
+| Divide | 222–258 | 0 | 3,009 | 3,360 | 185 |
+| Pillars | 245–235 | 0 | 2,365 | 2,865 | 191 |
+| Crossroads | 242–238 | 0 | 2,400 | 2,830 | 191 |
+| Trenches | 250–230 | 0 | 2,507 | 3,030 | 190 |
+| Outposts | 237–243 | 0 | 2,275 | 2,520 | 191 |
+| Zigzag | 220–260 | 0 | 5,596 | 6,442 | 127 |
+
+**Games don't run forever.** All 2,880 reached 200, most in 40–50
+seconds of game time (Zigzag about 93). They're close: the losing
+team usually gets to 185–191. Zigzag is the exception at a median of
+127, so a lead there tends to snowball. 0 crashed, 0 friendly fire.
+
+Divide (222–258) and Zigzag (220–260) both leaned red, by about 1.6
+and 1.8 standard deviations. A review of the respawn code for mirror
+asymmetries found nothing, so both got fresh samples. **Divide, 960
+more games: 493–467**, the other way; the first result was chance.
+**Zigzag, 960 more: 464–496**, red again but only about 1 standard
+deviation. It had been dead even without respawns (721–719 in 10),
+so a 2,400-game sample was fixed in advance: **1,209–1,191**. Chance
+as well. In all, 12 ran 7,120 games under the default rules with 0
+stalemates.
+
+**`LIVES=n`, added after the first 12 batches:** each soldier gets n
+lives (n−1 respawns). Unset or 0 means unlimited, and 1 means no
+respawns. It combines with `RESPAWNS`: a respawn needs one from the
+soldier's own lives *and* one from the team pool. With `LIVES=3
+SCORE_LIMIT=0` (last gang standing, 1,440 games): 708–732 overall,
+games of 35–45 s (Zigzag about 74 s), and the loser usually kills
+129–135 of the winner's 150 lives.
+
+**Bug found in 13:** `read_rules` put the default lives count in
+`ecx` *before* calling `getenv`. `ecx` is caller-saved, and `getenv`
+left 69 in it, so "unlimited" was really 68 respawns per soldier. In
+12 no game ever came close to using 68 (at most about 200 deaths
+spread over 50 soldiers), and the check draws no random numbers, so
+every 12 result above stands. It showed up in 13, where the default
+is 3 lives and games ran to 1,900 kills a side. The default is now
+set after the call.
+
+## `13_neighborhood.asm` — the neighborhood
+
+The test arenas are replaced by a city neighborhood: two rival gangs,
+the **Crips** (blue, team 0) and the **Bloods** (red, team 1), each
+coming out of its own apartment complex.
+
+**The map** is 1280×720 (plus the scoreboard strip): an avenue, two
+cross streets and a side street, blocks of houses, a store and
+offices, a fenced parking lot, alleys with dumpsters, and row houses.
+It's data, laid out and checked in `tools/gen_neighborhood.py`:
+
+```bash
+python3 tools/gen_neighborhood.py --write 13_neighborhood.asm   # regenerate the data block
+python3 tools/gen_neighborhood.py --preview hood.png            # a picture of it (needs PIL)
+```
+
+Before emitting anything, the generator checks that every walkable
+grid cell can reach every other, that no two props overlap, that
+every pickup sits on open ground, and that 50 soldiers can be packed
+into each lobby (300 random packings each, using the game's own
+spawn rule).
+
+**Not mirrored: sides are swapped instead.** A real neighborhood
+isn't symmetric, so `choose_sides` draws one random bit per game to
+decide which gang gets which complex. Any home-turf advantage then
+averages out over many games. The win line records where the Crips
+lived (`; crips home west`), so the advantage itself can be measured
+separately from gang fairness. The "forward first" tie-breaks from
+6c and 09 now use `fwd_sign[team]`, which points toward the enemy's
+home, instead of "team 0 goes +x".
+
+**Apartment complexes with doors.** Each complex is a ring of 10px
+walls with two 40px doorways, around a tiled lobby. Soldiers spawn
+inside the lobby (`SPAWN_GAP` 20, since a lobby is smaller than the
+old spawn strip), respawn there too, and walk out through the doors.
+The flow field routes them out with no special code. The complex
+walls are drawn in the colour of whichever gang lives there this
+game.
+
+**Low cover.** Buildings and complex walls block walking *and*
+bullets. Cars, dumpsters and fences block walking only: you can
+shoot over a car. So there are now two questions: "can a soldier
+stand here?" and "can a bullet pass here?". Both come from one
+precomputed **blockmap**, one byte for each of the 1265×705 possible
+soldier corner positions: `BLOCK_WALK` for walls and props,
+`BLOCK_SIGHT` for walls only. `build_blockmap` marks each wall or
+prop as a slightly bigger rectangle of bytes (a box at corner `cx`
+overlaps a rectangle at `wx` when `wx−15 ≤ cx ≤ wx+w−1`).
+
+- `is_box_blocked` went from a loop over every wall to one bounds
+  check and one byte. `line_blocked` calls it for every point on
+  every line, and the map now has 54 walls and props.
+- `line_blocked` (walking) and the new `sight_blocked` (line of
+  sight, before firing) share the same Bresenham walk and differ
+  only in which bit they test (`lb_mask`).
+- `build_walkable` checks the blockmap over each grid cell's corner
+  range, instead of a rectangle test against every wall.
+
+**The look** is a list of 337 coloured rectangles from the generator:
+grass, trees, sidewalks, asphalt, lane dashes, crosswalks, a
+parking lot with stall lines, rooftops with vents, row-house ridges,
+tiled lobbies with door mats, cars with windows, dumpsters with
+lids, fences with posts. `render_background` draws them once into
+`bg_buffer`, plus the complex walls in their owners' colours. Every
+frame starts with one `rep movsq` of that buffer (3.7 MB). It's all
+drawing only, and headless runs skip it.
+
+**Names and rules.** The scoreboard reads `CRIPS 75 …
+NEIGHBORHOOD 0:24 … BLOODS 68`, then `BLOODS WIN`. The win line
+says `Team 0 (Crips) wins` / `Team 1 (Bloods) wins`, so `batch.sh`
+still counts it. Defaults are 3 lives per soldier and last gang
+standing (`DEFAULT_LIVES` 3, `DEFAULT_SCORE_LIMIT` 0). `LIVES=0`
+gives unlimited respawns, and `RESPAWNS` and `SCORE_LIMIT` work as
+in 12.
+
+### Verification
+
+- **Proof it works:** gdb frame dumps at 0:03 (both gangs streaming
+  out of their doors, the Crips in the east complex that game) and
+  0:24 (the fight at the avenue by the parking lot, respawns coming
+  out of both lobbies, `CRIPS 75 … BLOODS 68`).
+- **960 headless games** (about 0.85 s each), default rules:
+  - **Crips 475, Bloods 485**, fair between the gangs, thanks to
+    the side swap.
+  - 0 stalemates, 0 crashed, 0 friendly fire.
+  - Median game 3,338 ticks (56 s), 99th percentile 5,306, longest
+    10,101. The loser usually kills about 128 of the winner's 150
+    lives.
+- **But the map has a home advantage: the east complex won 568 to
+  392** (59%, about 5.7 standard deviations, definitely real). The
+  swap keeps the gangs even over many games, but in any single game
+  the side draw matters a lot. Balancing the map is a next step.
+
+## `14_events.asm` — random encounters: the police and a pitbull
+
+The neighborhood gets two things neither gang controls.
+
+**The police.** After the first 5 seconds, a police car can arrive
+at any tick with a 1-in-600 chance (about every 10 seconds). There's
+never more than one at a time. It takes one of six routes (the
+avenue or either cross street, each way, in the proper lane),
+drives 3 px a tick, and leaves at the far edge. The cars that were
+parked on those streets are gone from the map, so it doesn't drive
+through them.
+
+- **Shooting:** every 25 ticks, the officers fire at the nearest
+  soldier within 350px they can see (`sight_blocked`: walls stop
+  them, cars don't). 50% to hit, 34 damage.
+- **Fear:** a soldier within 220px of the car drops everything,
+  including fighting and pickups, and heads for a point directly
+  away from it. There's no flow field for "away", so a wall in the
+  way gets the old side-step.
+- **Arrests:** any soldier the car touches is gone for good. No
+  respawn, whatever lives it had left, and it counts as out for its
+  gang.
+
+**The pitbull.** After 10 seconds, a walk can start at any tick
+(1 in 900): someone walking a dog on a leash along one of the
+avenue's sidewalks. Once they're on screen, the dog slips its leash
+with a 1-in-420 chance per tick (about 7 seconds). It then chases
+the nearest soldier of either gang, stepping around walls one axis
+at a time, and bites every half second: 75% to hit, 30 damage. After
+15 seconds, animal control collects it. The walker just keeps
+walking.
+
+**Shared plumbing:**
+
+- Police and dog kills score for nobody. Those soldiers die the
+  normal way (`event_damage` → `drop_and_book`: drop the gun, book a
+  respawn if lives allow), and spawn protection still applies.
+- `spawn_effect` accepts a shooter of −1, meaning "the position in
+  `fx_src`". That's laid out like a soldier's x and y, so police
+  tracers and dog lunges use the existing tracer and knife-thrust
+  animations.
+- The events are updated once per tick (`update_events`), after the
+  flow fields and before the soldiers move. They draw random numbers
+  like everything else, so `SEED` still replays a game exactly.
+- The scoreboard's middle flashes `POLICE!` (red and blue) or shows
+  `DOG LOOSE!`. The win line adds
+  `; arrests n; police kills n; dog kills n`.
+- The loose dog is drawn tan: red-brown looked like a Blood.
+
+### Verification
+
+- **Frames from gdb:** the police car driving east along the avenue
+  through the middle of the fight, with `POLICE!` flashing; later, a
+  second car at the far end with tracers flying, the walker on the
+  sidewalk and the dog loose in the crowd.
+- **960 headless games,** default rules:
+  - 0 stalemates, 0 crashed, 0 friendly fire.
+  - Median game 3,117 ticks (52 s; 13 was 56 s), longest 5,669.
+  - Per game, on average: **21.7 arrests** (up to 65), 1.2 police
+    kills, 2.7 dog kills. The car mostly matters by running people
+    over. The main fight usually sits on the avenue, and a packed
+    crowd can't scatter fast enough.
+  - Crips 461, Bloods 499 (about 1.2 standard deviations, chance).
+  - **The home advantage moved:** in 13 the east complex won 59%;
+    here the west complex wins 54% (515–445, about 2.3 standard
+    deviations). Removing the cars parked by the east complex and
+    adding the encounters changed the balance. The side swap still
+    keeps the gangs even.
+
+## `15_bighomie.asm` — the Big Homie
+
+Once per gang per game, when that gang is clearly losing, its **Big
+Homie** walks out of its apartment complex.
+
+**When.** `update_bosses` checks each tick. `team_strength` counts
+everything a gang has left: each soldier alive or waiting to respawn
+counts 1, plus every life still in reserve. The Big Homie is due when
+ours × 100 < `BOSS_AT` × theirs. That's 40 by default (see the
+tuning below), and
+`BOSS_AT=n` in the environment changes it without rebuilding (0 = no
+Big Homies). With unlimited lives there's nothing to count, so it's
+`BOSS_KILL_GAP` (40) kills behind instead. He comes out through
+`respawn_soldier`: the safest of 8 spots in the lobby, with spawn
+protection. If the lobby is full, he tries again next tick.
+
+**What he is.**
+
+- 400 health (a soldier has 100), and one life.
+- Already armed with a pistol.
+- Double damage and 20 points more chance to hit (capped at 95%).
+- Not scared of the police, though the car can still arrest him.
+- Drawn with a gold border and a health bar. The scoreboard
+  announces `CRIPS BIG HOMIE!` or `BLOODS BIG HOMIE!` for 3 seconds.
+- The win line adds `; big homies 1-0` (Crips-Bloods, 1 = came
+  out).
+
+**Where he lives.** Each Big Homie has his own soldier slot after the
+50-a-side squads: `SQUAD` = 100, `BOSS0` = 100, `BOSS1` = 101,
+`TOTAL_SOLDIERS` = 102. Every loop over soldiers just runs two
+further, and nothing about the squads changes. The slots start with
+health 0, nothing booked and no lives, so they're out of play until
+he's sent. `MAX_PICKUPS` gained two slots, so "every weapon is held
+or lying in exactly one slot" (6b) still holds when his gun drops.
+
+### Verification and tuning
+
+- **A frame from gdb** just after one came out: the Bloods' Big Homie
+  at their west door, gold-bordered with a full health bar, and
+  `BLOODS BIG HOMIE!` on the scoreboard.
+- **480 headless games at each `BOSS_AT`:**
+
+  | `BOSS_AT` | Came out (one gang) | That gang won | Both gangs | Median margin | Median ticks |
+  |---|---|---|---|---|---|
+  | 0 (off) | — | — | — | 20 | 3,099 |
+  | 40 | 452 | 48 (10%) | 25 | 15 | 3,220 |
+  | 60 | 381 | 10 (2%) | 99 | 14 | 3,235 |
+  | 80 | 260 | 5 (1%) | 220 | 13 | 3,217 |
+
+  0 stalemates at every setting, and Crips against Bloods within
+  chance at each. **He makes games closer but almost never turns
+  them round.** A gang below 60% of the other's strength is too far
+  behind for one soldier to fix. And at 60 and 80 the *leading* gang
+  often dips below the threshold at some point too, gets its own Big
+  Homie, and cancels the comeback. That's why the latest setting (40)
+  shows the most comebacks.
+- **The fix, and the new default:** `BOSS_AT` defaults to 40, and a
+  gang can't get its Big Homie *while the other gang's is still
+  alive*. The side he's beating can't answer him with its own, but
+  if the game swings again later, it can still get one. 480 games:
+  a Big Homie came out in 472, and **his gang came back to win 74
+  times (15%)**, up from 2% at the old default. Both gangs got one in
+  only 3 games (25 before). 0 stalemates, Crips 228 to Bloods 252
+  (chance), median margin 15, median game 3,207 ticks.
