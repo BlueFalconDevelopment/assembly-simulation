@@ -49,12 +49,12 @@ sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
 cd assembly-simulation/stage7
 make
-./build/06_hold_fire
+./build/07_arenas            # random arena; ARENA=0..4 picks one
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
-example `Team 0 (blue) wins! (friendly fire: 0 hits, 0 kills; held fire
-3036 times)`. The window stays open on the last frame until you close
+example `Team 0 (blue) wins on Pillars! (friendly fire: 0 hits, 0 kills;
+held fire 1954 times)`. The window stays open on the last frame until you close
 it.
 
 Every stage directory works the same way: `make` builds each `.asm`
@@ -94,6 +94,7 @@ In `stage7`, each numbered file is the previous one plus one change:
 | `04_attack_fx` | Knife thrusts, tracers, shotgun fans, sparks and hit flashes. Drawing only: proven not to change the fight |
 | `05_friendly_fire` | Shots hit the first soldier in the line of fire, on either team |
 | `06_hold_fire` | Soldiers side-step instead of shooting through a teammate |
+| `07_arenas` | Five mirrored wall layouts, picked at random or with `ARENA=n` |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

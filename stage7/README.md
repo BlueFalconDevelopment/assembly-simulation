@@ -343,3 +343,103 @@ conclusive (about 1 in 12).
 - **Cost:** soldiers hold fire about 3,200 times a game. Median game
   length under a full 48-game batch rose from 28.6s (05) to 34.6s, as
   soldiers spend ticks side-stepping for a clear shot.
+
+## `07_arenas.asm` — more arenas
+
+The single split wall from stage6c is now one of five layouts. Each
+game picks one at random, or `ARENA=n` picks one (handy for batching
+a single arena):
+
+```bash
+./build/07_arenas               # random arena
+ARENA=2 ./build/07_arenas       # Crossroads
+ARENA=2 STAGGER=0 ./batch.sh 48
+```
+
+| n | Arena | Layout |
+|---|---|---|
+| 0 | Divide | the original: one centre wall with a gap |
+| 1 | Pillars | three staggered columns of 36px pillars |
+| 2 | Crossroads | four 70×150 blocks: a + of corridors, lanes top and bottom |
+| 3 | Trenches | short staggered wall segments |
+| 4 | Outposts | a post in front of each spawn, two short bars, a centre bunker |
+
+The window title and the win line both name the arena:
+
+```
+Team 0 (blue) wins on Pillars! (friendly fire: 0 hits, 0 kills; held fire 1954 times)
+```
+
+**Walls are data, mirrored in code.** Each arena lists only its
+left-half walls (`ARENA` / `WALL` / `END_ARENA` macros), and
+`spawn_obstacles` adds each wall's mirror, `x' = SCREEN_W - x - w`,
+unless the wall is its own mirror (it straddles the centre line).
+So every arena is fair by construction, like spawns and pickups. The
+macros also check each layout at build time: a wall that crosses the
+centre without being its own mirror, a wall in the spawn strip
+(x < 200), or more than `MAX_OBSTACLES` (16) walls after mirroring
+is an assembler error, not a subtly broken game.
+
+**Pickups slide out of walls.** The pickup table is unchanged, and
+several arenas put walls on top of its spots. After the jitter,
+`spawn_pickups` checks whether a soldier could stand on the pickup
+(`is_box_blocked`). If not, it slides it toward its own team's side
+(−x) one pixel at a time until it's clear. The mirrored pickup copies
+the final x, so it slides +x, and the layout stays symmetric. Walls
+never reach the spawn strip, so the slide always stops. It uses no
+random numbers, so it doesn't change anything else about the game.
+
+### What the movement AI can't handle: mazes
+
+The first set had a fourth arena, **Zigzag**: three long walls, open
+at alternate ends, so crossing meant going down, then up, then down.
+It stalemated. A frame from a stuck game showed both teams milling
+behind their own walls. Soldiers only know "walk straight at the
+target, and side-step perpendicular when a wall is in the way". A
+route that first leads *away* from the enemy is invisible to that
+rule.
+
+Opening the walls at both ends mostly fixed it, but 2 of 24 games
+still ran past 240 seconds (normal games take 18–57s). Tracing one
+game every 20 ticks from tick 6,000 showed it wasn't a freeze. The
+last few soldiers were wandering: one slid the full height of the
+left screen edge, reversed, and slid back, because the sticky
+side-step keeps going the way it last went until something blocks
+it. Long walls in series turn that into endgames of thousands of
+ticks.
+
+The same thing, less often, stalled the first Crossroads (90×200
+blocks, 1 of 16) and the first Outposts (120px horizontal bars, 2 of
+144: a horizontal wall is the long way round for a soldier heading
+up or down). Zigzag became **Trenches** (short segments), Crossroads
+got smaller blocks with 75px lanes, and Outposts' bars went to 80px. The rule of thumb for
+this AI: **keep every wall short enough that a side-step clears it
+quickly, and don't put long walls in series.** Real pathfinding (a
+flow field on a grid) is what it would take to bring back mazes.
+
+### Verification
+
+- **Fairness:** 3 batches of 48 per arena, 720 games in all:
+
+  | Arena | Blue–red | Stuck |
+  |---|---|---|
+  | Divide | 69–75 | 0 |
+  | Pillars | 67–77 | 0 |
+  | Crossroads | 79–65 | 0 |
+  | Trenches | 77–67 | 0 |
+  | Outposts (80px bars) | 79–65 | 0 |
+  | **Total** | **371–349** | **0** |
+
+  371–349 is well within chance (under 1 standard deviation from
+  even). 0 crashed.
+- **Recheck** after red won six watched games in a row on the new
+  maps (a 1-in-64 streak): 2 more batches of 48 each on Pillars,
+  Crossroads and Trenches came out **153–134 for blue**, so the streak
+  was luck. One Pillars game stalled past 180s, the first in about
+  210 Pillars games. The slow-endgame wandering described above
+  still shows up now and then, even on open maps. Pathfinding should
+  fix it.
+- **Friendly fire:** still 0 hits, 0 kills in every readable result
+  line.
+- **Game length:** the longest of the 720 games took 73s, well short
+  of the 180s timeout.

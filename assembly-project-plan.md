@@ -1,8 +1,8 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-23, end of session) — read this first when picking the project back up
+## Status (as of 2026-09-24) — read this first when picking the project back up
 
-**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has six post-roadmap steps, all committed and pushed. **Latest build: `stage7/06_hold_fire.asm`** (~2,750 lines). Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
+**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has seven post-roadmap steps. **Latest build: `stage7/07_arenas.asm`** (~2,900 lines). Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
 
 | Step | File | Result |
 |---|---|---|
@@ -12,6 +12,7 @@
 | 7.04 | `04_attack_fx` | knife/tracer/shotgun/spark/flash animations, drawing only (same seed = byte-identical game to 03) |
 | 7.05 | `05_friendly_fire` | shots hit the first soldier on the line of fire (`first_in_line`), ~15 friendly kills/game |
 | 7.06 | `06_hold_fire` | a soldier side-steps instead of firing through a teammate: 0 friendly fire, 142–146 over 288 games |
+| 7.07 | `07_arenas` | 5 mirrored wall layouts (Divide, Pillars, Crossroads, Trenches, Outposts), random or `ARENA=n`: 371–349 over 720 games |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
@@ -30,6 +31,7 @@
 
 ### Next steps (the user picks)
 
+1. **Flow-field pathfinding** (grid BFS), so soldiers can handle maze-like arenas. The greedy side-step stalls on long walls in series (see 7.07's Zigzag). Watch mirror fairness in the BFS neighbour order.
 1. **Smarter hold-fire repositioning:** step back, or retarget an enemy with a clear line, instead of only side-stepping.
 2. **On-screen scoreboard in a hand-made pixel font.** `append_uint` (in 05/06) already turns numbers into digits.
 3. **Headless benchmark mode** (no rendering, no frame cap) to push the soldier count. `first_in_line` (every box × every point) will be the first hotspot.
