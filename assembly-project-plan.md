@@ -1,26 +1,42 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-23) — read this first when picking the project back up
+## Status (as of 2026-09-23, end of session) — read this first when picking the project back up
 
-**Done: every stage, 0 through 6c.** The capstone runs at 50 vs 50, verified fair over 96 headless games (46–50), with no stalls or crashes.
+**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has six post-roadmap steps, all committed and pushed. **Latest build: `stage7/06_hold_fire.asm`** (~2,750 lines). Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
 
-- **Repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public)
-- **Local path:** `~/Claude/Assembly_Simulation/`, one subdirectory per stage (`stage1/`, `stage2/`, ... `stage6b/`, `stage6c/`), each with its own `Makefile` and `README.md`. `make` in any stage directory builds every `.asm` file in it into `build/`.
-- **Each stage's README.md is the real changelog.** Read those before re-reading this file's roadmap. They document what each numbered file adds and, from Stage 6a on, the real bugs found during verification and how they were fixed. `stage6b/README.md` and `stage6c/README.md` together cover seven bugs in the capstone logic. Worth reading before touching `update_soldiers` again.
-- **`stage6c/batch.sh N [binary]`** runs N headless games and tallies wins/stuck/crashed. It works on any stage's binary. Use it for any fairness check (see traps below).
-- **Extensive session walkthrough** (Stages 0–6b) in `~/Claude/tech-blog/newPOSTS/` for a future blog post. 6c isn't written up there yet; `stage6c/README.md` has the whole story.
+| Step | File | Result |
+|---|---|---|
+| 7.01 | `01_collision` | soldiers can't overlap |
+| 7.02 | `02_random_spawn` | random spawns, mirrored so each map is fair |
+| 7.03 | `03_xorshift` | own RNG (xorshift64, `rdtsc` + splitmix64 seed), no libc RNG |
+| 7.04 | `04_attack_fx` | knife/tracer/shotgun/spark/flash animations, drawing only (same seed = byte-identical game to 03) |
+| 7.05 | `05_friendly_fire` | shots hit the first soldier on the line of fire (`first_in_line`), ~15 friendly kills/game |
+| 7.06 | `06_hold_fire` | a soldier side-steps instead of firing through a teammate: 0 friendly fire, 142–146 over 288 games |
 
-**Stage 7 (post-roadmap changes) in progress, `stage7/`:** `01_collision` (soldiers can't overlap), `02_random_spawn` (random, mirrored spawn points and jittered pickups), and `03_xorshift` (hand-rolled xorshift64 RNG seeded from `rdtsc`, no libc RNG) are done and batch-verified, and `04_attack_fx` adds drawing-only attack animations (knife thrusts, pistol/shotgun tracers, impact sparks, hit flashes), verified in gdb to play the identical game to `03` for a fixed seed. `05_friendly_fire` makes pistol/shotgun shots hit the first soldier in the line of fire (either team): 72–72 over 144 games, ~15 friendly kills per game. `06_hold_fire` has soldiers check the line before firing and side-step if a teammate is in it: 0 friendly fire, 142–146 over 288 games after fixing a 1px mirror asymmetry in `first_in_line` (now walks in half-pixel units). See `stage7/README.md`. From `03` on, `STAGGER=0 ./batch.sh N` launches all games at once.
+**Where everything lives:**
+- **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
+- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app). Published posts are `src/content/blog/bare-metal-deathmatch{,-2,-3}.mdx`, covering 0–6b, 6c–7.02 and 7.03–7.06. The drafts are in `newPOSTS/` (committed). A published post is adapted from its draft into the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top with a video the user picks. Check it with `npm run build`.
 
-### Where to go from here (optional, nothing required)
+**How we work (keep doing this):**
+- **One change = one new numbered file** in `stage7/` (copy the latest, add a header comment block, update `title` and the "Build and run" footer). Document it as a new section in `stage7/README.md`, and update the table above.
+- **Gameplay changes:** at least 3 batches of `STAGGER=0 ./batch.sh 48 build/NN_name > out.txt 2>&1` (per-game lines go to stderr, so capture `2>&1`, and use `grep '^team 0:'` for the tally). Anything consistently one-sided means looking for a mirror asymmetry before trusting it.
+- **Cosmetic changes:** prove they're cosmetic with the fixed-seed gdb check (below): both builds must end with byte-identical `soldiers`, `pickups` and `rng_state`.
+- **The user likes to watch:** after a change, run 3 games in the background (`for i in 1 2 3; do ./build/NN; done`, needs `DISPLAY`). The user closes each window to start the next.
+- **Commit and push only when asked.** Commit messages end with the Co-Authored-By line.
 
-The roadmap is complete. Natural next steps, roughly in order of payoff:
-1. ~~Finer seed than `time(NULL)`~~ Done in `stage7/03_xorshift` (`rdtsc` + splitmix64).
-2. ~~Soldier-vs-soldier collision~~ Done in `stage7/01_collision`.
-3. ~~Hand-rolled xorshift~~ Done in `stage7/03_xorshift`.
-4. ~~Write up 6c for the blog post.~~ Done: `Learning x86-64 Assembly Part 2` covers 6c, 7.01, 7.02; `Part 3 - Our Own RNG, Tracers, and Friendly Fire` covers 7.03–7.06.
+**Reusable recipes:**
+- **Fixed seed + end state (gdb):** `break spawn_obstacles`, `run`, `set var *(unsigned long*)&rng_state = 0x0123456789abcdef`, `watch *(int*)&game_over`, `continue`, then `dump binary memory f.bin (char*)&soldiers (char*)&soldiers+3600`. Run it headless with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`.
+- **Frames/GIF:** after the seed, `break SDL_LockTexture`, `ignore 2 450`, then loop `eval "dump binary memory f%03d.raw (char*)&back_buffer (char*)&back_buffer+1920000", $n` / `continue`. Raw frames are RGBA 800×600. Build the GIF in PIL with an exact palette from the frames' unique colours (only ~9, so it's lossless): 360 frames → every 2nd at 30ms ≈ 0.46 MB.
 
-### Traps to avoid (hard-won this session)
+### Next steps (the user picks)
+
+1. **Smarter hold-fire repositioning:** step back, or retarget an enemy with a clear line, instead of only side-stepping.
+2. **On-screen scoreboard in a hand-made pixel font.** `append_uint` (in 05/06) already turns numbers into digits.
+3. **Headless benchmark mode** (no rendering, no frame cap) to push the soldier count. `first_in_line` (every box × every point) will be the first hotspot.
+4. Weapons scattering a little when dropped on death.
+5. When there's enough material: a Part 4 blog post (draft in `newPOSTS/`, then `bare-metal-deathmatch-4.mdx`).
+
+### Traps to avoid (hard-won)
 
 - **A single test run proves nothing about fairness.** Two separate real bugs (a missing `call rand` that silently un-fixed an earlier turn-order bias, and a pickup-layout symmetry mismatch) each produced *deterministic-looking* one-sided win rates (24 of 24 games, in one case) that were invisible until running 10+ games in a row and counting. If you change spawn positions, pickup positions, or anything in `update_soldiers`'s processing order, re-run a batch of 10-20 games and check the win split before trusting it.
 - **Sampling once a second can hide an infinite loop.** The nastiest bug this session (a soldier stuck oscillating between two positions forever, `y=0 -> y=2 -> y=0 -> ...`) looked like a plain freeze when sampled every 60 ticks, and only became obvious tracing every single tick. If something looks "stuck," trace every tick for a short window before concluding it's just slow.
@@ -28,6 +44,8 @@ The roadmap is complete. Natural next steps, roughly in order of payoff:
 - **"Symmetric" has to mean symmetric under the mirror, in every rule, not just in the spawn data.** 6c's big bias (9–39) came from a movement rule (`.try_horizontal` always tried −x first), which is "the same for both teams" in code but means *toward the enemy* for one team and *away* for the other. Quick test: swap which side each team spawns on and batch again. If the bias follows the side rather than the team, look at map/movement rules, not processing order.
 - **Box "centres" aren't mirror-symmetric in whole pixels.** A 16px box at `x` has no centre pixel; `x+8` mirrors to 1px off the mirrored box's `x+8`. Anything that draws lines between soldier centres and acts on the result (e.g. `first_in_line` in 7.06) should work in half-pixel units (`2x + 15`).
 - **Batch runs need distinct seeds.** `srand(time(NULL))` has one-second resolution, so games launched in the same second play the *identical* game. `batch.sh`'s first version reported 16–0 twice from this. The giveaway was every game having the exact same duration.
+- **`cdq`/`idiv` (and `div`) overwrite `edx`.** 7.04's `spawn_effect` read a soldier index from `edx` after a division. Reload anything that was in `rdx`, or keep it in memory.
+- **Latent bugs wait for new callers.** `fill_rect` didn't clip negative x/y for five stages, until impact sparks landed off-screen (fixed in 7.04 onward). When new code calls an old helper with new kinds of inputs, check the helper's edge cases.
 - **`gcc -no-pie` is required** when linking anything that calls SDL2 (or any extern C function) from hand-written asm using plain `call func` — without it you get `relocation ... can not be used when making a PIE object`. Already baked into every stage's Makefile from stage2 onward; just don't drop it if writing a new one from scratch.
 
 ## Why
