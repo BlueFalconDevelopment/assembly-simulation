@@ -47,9 +47,9 @@ Linux x86-64 (developed on Ubuntu):
 ```bash
 sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
-cd assembly-simulation/stage7
+cd assembly-simulation/stage8
 make
-./build/15_bighomie          # Crips vs Bloods; ./build/12_respawn for the arenas
+./build/02_details           # Crips vs Bloods, with sprites (stage7 has the rest)
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
@@ -82,7 +82,8 @@ questions meant to be answered by experimenting.
 | [`stage6a`](stage6a) | The battle sim at 8v8: soldier structs, seek AI, knife/pistol/shotgun combat, pickups, win condition |
 | [`stage6b`](stage6b) | Obstacles, movement that routes around them, line of sight for ranged fire |
 | [`stage6c`](stage6c) | Scale to 50v50, plus the headless `batch.sh` harness |
-| [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire |
+| [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire, arenas, pathfinding, respawns, the neighborhood, random encounters, the Big Homie |
+| [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog so far |
 
 In `stage7`, each numbered file is the previous one plus one change:
 
@@ -103,6 +104,14 @@ In `stage7`, each numbered file is the previous one plus one change:
 | `13_neighborhood` | A 1280×720 city neighborhood: Crips vs Bloods out of their apartment complexes, cars as low cover |
 | `14_events` | Random encounters: a police car that shoots and arrests, and a pitbull that slips its leash |
 | `15_bighomie` | A miniboss, the Big Homie, for the gang that's losing (`BOSS_AT=n`) |
+| `16_tuning` | Soldiers flee off the road from the police; the Big Homie comes out earlier |
+
+In `stage8`:
+
+| File | Change |
+|---|---|
+| `01_sprites` | Hand-made 16×16 pixel-art soldiers: 8 facings, a walk cycle, gang colours, the weapon in hand |
+| `02_details` | Pixel-art weapon pickups, police car, dog and parked cars |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

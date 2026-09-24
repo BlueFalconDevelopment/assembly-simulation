@@ -1,3 +1,4 @@
 *.o
 stage0_smoketest/hello
 build/
+__pycache__/

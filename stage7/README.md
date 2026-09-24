@@ -1060,3 +1060,36 @@ or lying in exactly one slot" (6b) still holds when his gun drops.
   times (15%)**, up from 2% at the old default. Both gangs got one in
   only 3 games (25 before). 0 stalemates, Crips 228 to Bloods 252
   (chance), median margin 15, median game 3,207 ticks.
+
+## `16_tuning.asm` — scatter sooner, the Big Homie earlier
+
+Two changes after watching 15, plus a measurement:
+
+- **The win line says when the first Big Homie came out**
+  (`; big homie at 2115`, in ticks). That's how "he comes out at the
+  last minute" was checked: at `BOSS_AT=40` it was a median of **80%**
+  of the way through the game (quartiles 75–83%).
+- **`BOSS_AT` defaults to 60.** 480 games each on 16, with the new
+  fear radius:
+
+  | `BOSS_AT` | Comes out (median) | Came back to win | Arrests |
+  |---|---|---|---|
+  | 40 | 80% | 14% | 24.6 |
+  | 50 | 76% | 14% | 24.4 |
+  | 60 | 71% | 18% | 23.5 |
+
+- **`FEAR_RADIUS` 220 → 280, and soldiers run off the road.** The
+  bigger radius on its own made no difference: arrests stayed at
+  about 24 a game (14 had 21.7). Fleeing meant heading straight away
+  from the car, and for anyone *ahead* of it in its lane, "away" is
+  down the road in front of it: 2 px a tick against the car's 3. Now
+  a fleeing soldier aims `FLEE_DIST` (200) px *across* the car's
+  direction of travel (up or down for a car going left or right,
+  and the other way round), plus its distance from the car along it.
+
+**With both (480 games, defaults):** arrests **11.7 a game** (half;
+worst 35, 15's was 65), police kills 1.7. The Big Homie comes out at
+72% of the game, and his gang comes back to win 11% of the time
+(less than the 18% above; the arrests had been doing some of the
+equalising). Crips 241 to Bloods 239, 0 stalemates, 0 crashed,
+0 friendly fire, median game 3,224 ticks.
