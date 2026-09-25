@@ -7,8 +7,8 @@ time, each proven not to change the game (same seed → byte-identical
 `soldiers`, `pickups`, `rng_state` and `ticks` as the step before).
 
 Done so far: soldier sprites (8.01), detailed objects (8.02), props
-and shadows (8.03). Next: ground effects (blood, casings, a death
-animation) as 8.04, then day and night as 8.05. Stage 9 is
+and shadows (8.03), ground effects (8.04). Next: day and night
+(8.05). Stage 9 is
 scale: more soldiers, more gangs, a bigger or scrolling city.
 
 ## Build
@@ -170,3 +170,41 @@ with the soldier.
 the final binary. Frames from gdb show the fight on the avenue, each
 figure with its shadow, with streetlights, a bush and the parking lot
 behind.
+
+## `04_ground.asm` — ground effects
+
+The street remembers the fight:
+
+- **Blood:** a splat where a bullet or blade lands on a hit (four
+  hand-drawn 12×12 shapes).
+- **Shell casings:** by the shooter's feet for every pistol shot
+  (two brass pixels) and shotgun shot (a red shell with a brass
+  base). The police car leaves them too.
+- **A death animation:** a killed soldier shows the white hit flash,
+  then lies on the ground (`dead_sprite`, in gang colours, half of them
+  falling the other way) for `DEATH_LIE` (36) frames, then is gone,
+  leaving a blood pool (two 16×16 shapes). `spawn_effect`'s
+  `death_linger` grew by `DEATH_LIE` to make room for the fall.
+  Arrested soldiers just vanish: the police took them.
+
+**Stamped into the background.** The splats, casings and pools are
+written straight into `bg_buffer`, which is copied to the screen
+every frame, so they stay for the rest of the game at no cost per
+frame. `stamp_blend` mixes blood 50/50 with what's there (half of
+each channel of both, masked and added), so the ground's texture
+shows through. Casings are solid.
+
+**Drawing only, and it had to be designed that way.** The splat
+shape and the casing scatter need randomness, and the obvious source
+(`rng_next`) would change the game: one extra draw shifts every
+random number after it. So `deco_hash` scrambles a position and the
+frame count instead. The splat is stamped the frame a hit's tracer
+arrives (`.start_flash`), the casing on a shot's first frame, and the
+pool when a dead soldier's `death_linger` runs out. All three
+happen in rendering, which headless runs never do. Fallen soldiers
+don't get the standing soldiers' foot shadow.
+
+**Verification:** seeds 4242 and 77 ended byte-identical to 8.03.
+Frames from gdb at 0:25 and at the end of a game. By the end, the main
+battle zone is densely marked with blood: a lot, but it stays where
+the fighting actually was.

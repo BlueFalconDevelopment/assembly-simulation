@@ -49,7 +49,7 @@ sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
 cd assembly-simulation/stage8
 make
-./build/03_props             # Crips vs Bloods, with sprites (stage7 has the rest)
+./build/04_ground            # Crips vs Bloods, with sprites (stage7 has the rest)
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
@@ -83,7 +83,7 @@ questions meant to be answered by experimenting.
 | [`stage6b`](stage6b) | Obstacles, movement that routes around them, line of sight for ranged fire |
 | [`stage6c`](stage6c) | Scale to 50v50, plus the headless `batch.sh` harness |
 | [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire, arenas, pathfinding, respawns, the neighborhood, random encounters, the Big Homie |
-| [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog, then props and shadows so far |
+| [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog, then props, shadows and ground effects so far |
 
 In `stage7`, each numbered file is the previous one plus one change:
 
@@ -113,6 +113,7 @@ In `stage8`:
 | `01_sprites` | Hand-made 16×16 pixel-art soldiers: 8 facings, a walk cycle, gang colours, the weapon in hand |
 | `02_details` | Pixel-art weapon pickups, police car, dog and parked cars |
 | `03_props` | Shadows, trees, bushes, dumpsters, fences, rooftop AC units, streetlights, textured ground |
+| `04_ground` | Blood splats, shell casings and a death animation that stay on the street |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.
