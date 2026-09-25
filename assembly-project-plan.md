@@ -97,6 +97,102 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 - **To find what a lopsided batch is doing, sample the game.** A gdb Python script that breaks on `check_win` and reads `soldiers` every 400 ticks (count, mean x, armed, who hasn't moved) found both 9.02 jams in minutes. The scripts: break, `ignore 1 399`, `continue`, read memory with `struct`.
 - **An even grid cell width can't be mirror-symmetric over an odd number of positions** (corner x 0..784 is 785 positions). That's why the pathfinding grid uses 9px cells (09).
 
+
+## Stage 10+: the game (approved 2026-09-25)
+
+The roadmap from simulation to playable game. Everything here is subject to change.
+
+### Context
+
+The sim is finished as a sim: 50 Crips vs 50 Bloods on a real-streets map (stage9/03_bfs, 5120×2608), with police, a dog, the Big Homie, day and night, and a camera. It's fast (1.6 s per headless game) and heavily verified: fixed-seed byte-identical checks for refactors, and 144–480-game batches for fairness.
+
+The goal now is a **playable game**. The player is a delivery driver making runs through the gang war for money, spending it on guns, armor, better vehicles (a bicycle first, working up) and abilities. New factions add chaos: Biker packs, cartel hit teams, and the good ole boys. Everything is subject to change, so the roadmap is a series of small steps. Each step must leave a working, tested build, as every stage so far has.
+
+### Design decisions (from the Q&A)
+
+| Topic | Decision |
+|---|---|
+| Hostility | **Everyone but civilians is hostile to the player**: gangs, Bikers, cartel, good ole boys; police arrest/shoot anyone in the way; the loose pitbull bites anyone |
+| Session | **Shifts with saved progress.** A shift is a timed run of deliveries; money, gear and upgrades save to a file. Death ends the shift early: you lose the cargo and some cash, and keep your gear |
+| Combat | **Full combat**: WASD, mouse aim, click to shoot. Starts weak; the shop makes fighting viable |
+| Movement | **A vehicle from the start, upgraded over time**: bicycle → moped → motorcycle → car → van (the ladder can change). Park, get off, and walk the package to the door (E to get on/off). Each tier is faster, carries more, and protects more: on a bicycle or moped you're fully exposed; a car's body blocks some shots. Vehicles are bought in the shop |
+| Ramming | **Yes, but it damages the vehicle** and slows it. Damage scales with the vehicle's weight: a bicycle barely knocks someone over, a car kills |
+| Deliveries | **Job board**: pick from a few offers (pickup at a business, drop at a house), timed, paying more for longer or more dangerous routes. One package at first; more capacity is an upgrade |
+| The war | **Never ends in a shift**: unlimited respawns, ebbing and flowing. "Last gang standing" stays as a watch/test mode |
+| Bikers | **Packs as an event**: heavily armored riders roll out of a (made-up) clubhouse now and then, hit and run against gangs, and go home |
+| Cartel | Event: picks a random gang at a random time and sends **4 hitmen** (less health, more damage) to kill N of that gang, then they leave |
+| Good ole boys | Event: **a pickup truck, mini-boss tough**, hostile to all gangs (and you); leaves a trail of beer cans stamped into the ground |
+| Fair homes | **Pre-checked pairs, early**: the generator proposes home pairs, batches keep only near-50/50 ones, and each game picks one at random. This also fixes today's 62% west lean |
+| Shop | **Both**: big purchases on a shop screen between shifts; repairs and ammo at a garage on the map mid-shift |
+
+### Ground rules (how we avoid breaking the system)
+
+1. **One change = one numbered step**, as now. With the game code growing past 10k lines, stage 10 splits the source into modules. Each step is a folder `stage10/NN_name/` (main.asm plus `%include`d modules), copied from the previous step's folder, so every step still builds on its own and history stays intact. The map files stay shared in `stage10/maps/`.
+2. **The sim stays alive as a test harness.** `HEADLESS=1` (and a `MODE=watch` window mode) runs no player: the old last-gang-standing sim. `batch.sh` keeps working on every step.
+3. **Refactors are proven byte-identical.** Same seed, same `soldiers`/`pickups`/`rng_state`/`ticks` as the step before (the existing gdb recipe), headless and windowed.
+4. **Gameplay changes are batch-tested:** no stalemates or crashes, and the gangs stay even. The home split is judged against the fair-pairs list.
+5. **Player code never touches the sim's RNG in watch mode.** Anything the player does gets its own RNG, so sim replays and fairness tests stay valid.
+6. **Data-driven tables** (factions, hostility, weapons, items, vehicles) live in `.data`, or are generated when they depend on the map, so balance changes are edits to data, not code.
+7. **The city's name never appears** (see memory).
+
+### Architecture changes the game needs (from the current code)
+
+- **N factions instead of two teams.** These all assume two teams: `score[2]`, `home[2]`, `fwd_sign[2]`, `tickets[2]`, `boss_state[2]`, the `BOSS0/1` slots, `field_to0/1`, `check_win`, `choose_sides`, `print_winner`, the HUD, the win line, and `batch.sh`'s tally. The plan: a faction index per soldier, a hostility matrix, and a flow field per faction meaning "toward anyone hostile to me". The lazy BFS from 9.03 (`bfs_ensure`/`bfs_until` in `stage9/03_bfs.asm`) keeps extra fields cheap. Soldier slots become pools: gangs, event units (Bikers, hitmen, good ole boys) and the player.
+- **The player as an entity** in the same world: a hostile target for everyone (a BFS source for every faction's field; considered by `find_nearest_enemy`), hit by `first_in_line` shots, and blocked by `is_spot_blocked`/the blockmap.
+- **Vehicles.** Today only the police car exists, driving straight lanes from `cop_routes`. The game needs:
+  - free-riding physics for the player's vehicle, one engine for every tier from bicycle to van, driven by a vehicle table (heading, speed, turning, 16-facing sprites, collision by sampling the blockmap)
+  - a **road graph** exported by `tools/gen_southside.py` (intersections as nodes, streets as edges), so AI vehicles (Bikers' bikes, the good ole boys' truck, later the police) can drive anywhere
+- **Game state machine:** title → shift → shift summary → shop → shift…, plus pause. Screens are drawn with the existing 5×7 font (`draw_text`, `hud_fb`).
+- **A save file** via raw `open`/`read`/`write` syscalls, in keeping with the project's spirit.
+- **Fair homes:** the map must hold several candidate complex sites. The ones unused this game are drawn as neutral, closed buildings: their doors become walls in the blockmap at start.
+
+### Roadmap
+
+Each line is one step and one build. The order puts safe refactors first, then the core loop (drive, deliver, get paid, shop), then factions.
+
+#### Phase A: foundations (sim only, provable)
+- **10.01 Modules.** Split `03_bfs.asm` into `%include` modules: core, map, AI, pathfinding, draw, HUD, events. Binary behavior byte-identical.
+- **10.02 N factions.** Generalize teams to factions with a hostility table: arrays sized `MAX_FACTIONS`, per-faction fields, homes and scores. With 2 factions it must be byte-identical to 10.01.
+- **10.03 Fair home pairs.** Generator: candidate complex sites, and pairs filtered by walking distance and mirrored pickups. A batch script scores each pair; the map include gets the list of pairs that pass. `choose_sides` picks a pair; unused sites are closed. Batch-proven near 50/50.
+- **10.04 Endless war.** `MODE=game` default: unlimited respawns, no winner; `MODE=watch` keeps last gang standing. Batches still run watch mode.
+
+#### Phase B: the player (the core loop)
+- **10.05 On foot.** Spawn at a depot; WASD plus mouse aim; the camera follows (with zoom kept); a starting pistol with ammo; health; death. Everyone hostile. The player's own RNG.
+- **10.06 The bicycle.** Get on/off with E; riding physics (heading, speed, turning, 16-facing sprite, blockmap collision); fully exposed rider; light ramming (knocks soldiers down, hurts the rider too). The physics is written once, driven by a **vehicle table** (top speed, acceleration, turn rate, mass, health, armor, capacity, sprite, whether the rider can shoot), so later tiers are new rows plus art, not new code.
+- **10.07 Deliveries.** Pickups at real businesses (the OSM buildings on Lee) and drop-offs at generated houses (both exported by the generator). A job board of 3 offers in the HUD, picked with number keys; on-map markers plus an edge-of-screen arrow; a timer; pay by distance and danger (danger = walking distance through gang-held cells, from the BFS fields); money.
+- **10.08 Shifts and saving.** Title screen, shift clock (tied to the day/night clock), shift-end summary, the death penalty (cargo and some cash), a save file (money, gear) via syscalls.
+- **10.09 The shop screen.** Between shifts: an item table (price, stats), buy and equip, saved.
+- **10.10 Progression content.** The vehicle ladder (moped, motorcycle, car with a body that blocks shots, van; each a row in the vehicle table plus sprites), guns (pistol → SMG, shotgun, rifle; the existing weapon code extended), armor (damage reduction), vehicle upgrades (armor, speed, package capacity), abilities (sprint/dash, and ideas like a nitro burst or smoke), bonuses and status effects (bleeding, stun, adrenaline). All data-driven.
+- **10.11 The garage.** A made-up site on the map for repairs and ammo mid-shift, costing money and time.
+
+#### Phase C: new factions and encounters
+- **10.12 Road graph and AI drivers.** The generator exports the street graph; a vehicle AI follows it with A*/BFS on nodes. The police move onto it (optional, batch-tested).
+- **10.13 The Bikers.** A made-up clubhouse. Pack events: 4–6 armored riders on motorcycles pick a gang, drive-by fire, peel off, circle back, and go home. Hostile to all. Batch-tested so they don't favor a gang.
+- **10.14 The cartel.** An event that picks a random gang at a random time: an SUV drops 4 hitmen (low health, high damage) who hunt that gang until N kills, then get picked up. Hostile to the player.
+- **10.15 The good ole boys.** A pickup-truck encounter with a mini-boss crew; hostile to all gangs and the player; beer cans stamped into `bg_buffer` along its path (the 8.04 casing/blood mechanism: `stamp_casing`/`stamp_blend`).
+
+#### Phase D: polish (to be planned when we get there)
+Balance passes with batches (and a scripted delivery bot to test job pay against risk), menus, possibly sound (SDL audio), civilians, the blog.
+
+### Critical files and reuse
+
+- `stage9/03_bfs.asm` is the base for 10.01. Reuse: `bfs_ensure`/`bfs_until` (per-faction fields), `flow_waypoint`, `find_nearest_enemy`, `first_in_line`, `is_spot_blocked`, `update_police` (event pattern), `update_bosses` (spawn-an-elite pattern), `stamp_casing`/`stamp_blend` (beer cans), `draw_sprite_ex` (vehicles, 16 facings), `draw_text`/`hud_fb` (menus, job board), `camera_clamp`/`view_begin` (follow cam), the `deco_hash` rule (drawing never touches the RNG).
+- `stage9/tools/gen_southside.py`: add candidate home sites, fair-pair export, business and house lists for deliveries, depot/garage/clubhouse sites, and the road graph. Keep `cracks()` and the connectivity checks.
+- `stage9/tools/gen_sprites.py`: player sprite, the player's vehicles (bicycle, moped, motorcycle, car, van; 16 facings each), Biker motorcycles, SUV, pickup truck, hitmen, good ole boys, beer can.
+- `batch.sh`: faction-aware tally (10.02), and a pair-scoring mode (10.03).
+- `stage9/tools/profile.py` for checking performance after each phase.
+
+### Verification (every step)
+
+- `make` builds; `HEADLESS=1` runs; 3 windowed games for you to watch.
+- Refactor steps (10.01, 10.02): the fixed-seed gdb end-state `cmp` against the previous step, 12 seeds headless plus 1 windowed.
+- Sim-affecting steps: 3 batches of 48 (more if a lean shows up), with no stalemates or crashes and even gangs. 10.03 must bring the home split near 50%.
+- Player steps: a playable build to try, a gdb frame check of new visuals, and headless watch mode still byte-identical to the previous step (the player code doesn't touch the sim).
+- Save file: write, quit, reload round trip; a corrupt or missing file falls back to a new save.
+
+### Open questions for later (not blocking Phase A)
+Shift length (one game day, currently 4 minutes, or more?); how many hitmen kills before the cartel leaves; the good ole boys' crew size and weapons; which abilities make the first shop list; the vehicle ladder's exact tiers and prices, and whether you can shoot while riding a two-wheeler (one-handed, less accurate?); whether civilians are added (they'd give "everyone but civilians" something to mean); sound.
+
 ## Why
 
 Chris Sawyer wrote 99% of RollerCoaster Tycoon (1999) in hand-coded x86 assembly using MASM, with just 1% C to glue it to Windows/DirectX. The goal here is the same spirit, scaled down: learn x86-64 assembly by building toward a capstone simulation, almost entirely by hand — a two-team deathmatch: soldiers armed with knives, pistols, and shotguns, fighting until one team has no one left standing.
