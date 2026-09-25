@@ -41,6 +41,7 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 | 10.06 | `stage10/06_bicycle/` | `vehicles.asm`: one physics routine driven by `vehicle_types` rows (bicycle row 0: top 4 px/tick, mass 2, health 60, aim −15%); 1/16 px position, 0..255 heading, sine table; WASD point the way (`key_heading`, turn toward it), no keys brakes; wall slide; soldiers bumped aside (`vehicle_bump`: shove 12 px, ram at ≥ 2 px/tick). Speed ladder ~1 px a rung. Art from `tools/gen_vehicles.py`. Watch byte-identical to 10.05. Reworked after play test (tank steering too hard) |
 | 10.07 | `stage10/07_deliveries/` | `deliveries.asm`: 3 offers (business → house, ≥ 600 px), keys 1/2/3, X drops; markers + edge pip; clock from pickup, late = half pay; pay $10 + 1/60 px + $6 × danger (gangsters near the route); money. Map `southside3` adds `biz_points` (76) / `house_points` (572). Scoreboard two rows (`HUD_H` 40). Fixed `msg_buf` overflow (160 → 512). Watch byte-identical to 10.06 |
 | 10.08 | `stage10/08_shifts/` | `shifts.asm`: title → shift (`SHIFT_TICKS` 10800) → summary, ENTER; death ends the shift, −20% cash. `save.asm`: 64-byte save (`~/.courier_save` / `$SAVE`) via raw syscalls, tmp + rename, checksum, damaged → new. `draw_text` via `text_fb` for overlays. Watch byte-identical to 10.07; save round-trip, damaged and death tested |
+| 10.09 | `stage10/09_police/` | the police never target the player, the car waits instead of driving into you, no arrest (play-test request). Watch byte-identical to 10.08; tested with a car coming down Lee at the player |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (still the stage 7.06 look), a stage table and per-stage file tables. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. `stage7/README.md` covers game logic (read it before touching `update_soldiers`); `stage8/README.md` covers graphics.
@@ -174,15 +175,16 @@ Each line is one step and one build. The order puts safe refactors first, then t
 - **10.06 The bicycle.** Get on/off with E; riding physics (heading, speed, turning, 16-facing sprite, blockmap collision); fully exposed rider; light ramming (knocks soldiers down, hurts the rider too). The physics is written once, driven by a **vehicle table** (top speed, acceleration, turn rate, mass, health, armor, capacity, sprite, whether the rider can shoot), so later tiers are new rows plus art, not new code.
 - **10.07 Deliveries.** Pickups at real businesses (the OSM buildings on Lee) and drop-offs at generated houses (both exported by the generator). A job board of 3 offers in the HUD, picked with number keys; on-map markers plus an edge-of-screen arrow; a timer; pay by distance and danger (danger = walking distance through gang-held cells, from the BFS fields); money.
 - **10.08 Shifts and saving.** Title screen, shift clock (tied to the day/night clock), shift-end summary, the death penalty (cargo and some cash), a save file (money, gear) via syscalls.
-- **10.09 The shop screen.** Between shifts: an item table (price, stats), buy and equip, saved.
-- **10.10 Progression content.** The vehicle ladder (moped, motorcycle, car with a body that blocks shots, van; each a row in the vehicle table plus sprites), guns (pistol → SMG, shotgun, rifle; the existing weapon code extended), armor (damage reduction), vehicle upgrades (armor, speed, package capacity), abilities (sprint/dash, and ideas like a nitro burst or smoke), bonuses and status effects (bleeding, stun, adrenaline). All data-driven.
-- **10.11 The garage.** A made-up site on the map for repairs and ammo mid-shift, costing money and time.
+- **10.09 The police leave you alone** (added after the 10.08 play test). The officers never target you; the car waits rather than drive into you, and doesn't arrest you.
+- **10.10 The shop screen.** Between shifts: an item table (price, stats), buy and equip, saved.
+- **10.11 Progression content.** The vehicle ladder (moped, motorcycle, car with a body that blocks shots, van; each a row in the vehicle table plus sprites), guns (pistol → SMG, shotgun, rifle; the existing weapon code extended), armor (damage reduction), vehicle upgrades (armor, speed, package capacity), abilities (sprint/dash, and ideas like a nitro burst or smoke), bonuses and status effects (bleeding, stun, adrenaline). All data-driven.
+- **10.12 The garage.** A made-up site on the map for repairs and ammo mid-shift, costing money and time.
 
 #### Phase C: new factions and encounters
-- **10.12 Road graph and AI drivers.** The generator exports the street graph; a vehicle AI follows it with A*/BFS on nodes. The police move onto it (optional, batch-tested).
-- **10.13 The Bikers.** A made-up clubhouse. Pack events: 4–6 armored riders on motorcycles pick a gang, drive-by fire, peel off, circle back, and go home. Hostile to all. Batch-tested so they don't favor a gang.
-- **10.14 The cartel.** An event that picks a random gang at a random time: an SUV drops 4 hitmen (low health, high damage) who hunt that gang until N kills, then get picked up. Hostile to the player.
-- **10.15 The good ole boys.** A pickup-truck encounter with a mini-boss crew; hostile to all gangs and the player; beer cans stamped into `bg_buffer` along its path (the 8.04 casing/blood mechanism: `stamp_casing`/`stamp_blend`).
+- **10.13 Road graph and AI drivers.** The generator exports the street graph; a vehicle AI follows it with A*/BFS on nodes. The police move onto it (optional, batch-tested).
+- **10.14 The Bikers.** A made-up clubhouse. Pack events: 4–6 armored riders on motorcycles pick a gang, drive-by fire, peel off, circle back, and go home. Hostile to all. Batch-tested so they don't favor a gang.
+- **10.15 The cartel.** An event that picks a random gang at a random time: an SUV drops 4 hitmen (low health, high damage) who hunt that gang until N kills, then get picked up. Hostile to the player.
+- **10.16 The good ole boys.** A pickup-truck encounter with a mini-boss crew; hostile to all gangs and the player; beer cans stamped into `bg_buffer` along its path (the 8.04 casing/blood mechanism: `stamp_casing`/`stamp_blend`).
 
 #### Phase D: polish (to be planned when we get there)
 Balance passes with batches (and a scripted delivery bot to test job pay against risk), menus, possibly sound (SDL audio), civilians, the blog.
@@ -205,7 +207,7 @@ Balance passes with batches (and a scripted delivery bot to test job pay against
 
 ### Balance note (from the 10.07 play test)
 
-**Job pay can't be tuned yet.** It depends on what things cost, and prices depend on how dangerous the city is. The user's order: first tune the gangsters and the random encounters (numbers, strength: Phase C and after), then build the item list and its price scaling (10.09–10.10), and only then tune delivery pay (`JOB_BASE`, `JOB_PER_PX`, `JOB_DANGER`, `JOB_TIME*` in `deliveries.asm`) against it. Until then, pay stays at 10.07's values ($30–70 a job).
+**Job pay can't be tuned yet.** It depends on what things cost, and prices depend on how dangerous the city is. The user's order: first tune the gangsters and the random encounters (numbers, strength: Phase C and after), then build the item list and its price scaling (10.10–10.11), and only then tune delivery pay (`JOB_BASE`, `JOB_PER_PX`, `JOB_DANGER`, `JOB_TIME*` in `deliveries.asm`) against it. Until then, pay stays at 10.07's values ($30–70 a job).
 
 ### Notes from the 10.08 play test
 

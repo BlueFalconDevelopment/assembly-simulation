@@ -172,6 +172,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `06_bicycle` | Your bike: W A S D point where to ride, E gets on and off; momentum, sliding off walls, bumping through soldiers. The first row of a vehicle table |
 | `07_deliveries` | The job: a board of three offers (1, 2, 3), a package to pick up at a business and deliver to a house on the clock, pay by distance and danger |
 | `08_shifts` | A title screen, 3-minute shifts ending in a summary, dying ends the shift and costs 20% of your cash, and a save file written with raw syscalls |
+| `09_police` | The police leave you alone: they don't shoot you, and their car waits instead of running you over |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

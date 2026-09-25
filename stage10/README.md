@@ -15,16 +15,16 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/08_shifts             # the latest: the game (ENTER starts a shift; saves to ~/.courier_save)
-MODE=watch ./build/08_shifts  # last gang standing, no player (the default headless)
+./build/09_police             # the latest: the game (ENTER starts a shift; saves to ~/.courier_save)
+MODE=watch ./build/09_police  # last gang standing, no player (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild maps/southside3.* (17 s)
-python3 tools/score_pairs.py build/08_shifts     # re-score the home pairs (~40 min)
-PAIR=0 ./build/08_shifts                         # a given pair of homes
+python3 tools/score_pairs.py build/09_police     # re-score the home pairs (~40 min)
+PAIR=0 ./build/09_police                         # a given pair of homes
 MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
-python3 tools/gen_sprites.py --write 08_shifts/sprites.asm
-python3 tools/gen_vehicles.py --write 08_shifts/vehicle_art.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/08_shifts
+python3 tools/gen_sprites.py --write 09_police/sprites.asm
+python3 tools/gen_vehicles.py --write 09_police/vehicle_art.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/09_police
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -479,7 +479,7 @@ shifts, and a save file (`shifts.asm`, `save.asm`).
 |---|---|
 | title | The war goes on behind a dimmed view (W A S D pan, as in watch mode). "SOUTH SIDE COURIER", "A NEW SAVE" / "WELCOME BACK" / "YOUR SAVE WAS DAMAGED", your money and shifts, the controls, and "PRESS ENTER TO START YOUR SHIFT" |
 | shift | You, on your bike, with the job board, and 3 minutes on the clock ("SHIFT 2:13", on the right of the scoreboard's second row) |
-| summary | The clock ran out ("SHIFT OVER") or you died ("YOU DIED: SHIFT OVER"): deliveries, earnings, kills, anything lost, your total, and ENTER for the next shift. The shop goes here in 10.09 |
+| summary | The clock ran out ("SHIFT OVER") or you died ("YOU DIED: SHIFT OVER"): deliveries, earnings, kills, anything lost, your total, and ENTER for the next shift. The shop goes here in 10.10 |
 
 `player_on` now means "a shift is on": the player, the bike, the job
 board and the camera following you all check it already, so they run
@@ -529,3 +529,27 @@ seeds. With a gdb script and `SAVE=` pointing at a scratch file:
 2. Restarted: "loaded", $123, 1 shift.
 3. One byte changed: "damaged", starting over at $0.
 4. Dying with $500: the summary, "YOU DIED", $400 left ($100 lost).
+
+## `09_police/` — the police leave you alone
+
+`08_shifts/`, after the play test: "the police shouldn't shoot you and
+they should avoid running you over". Three changes to `update_police`:
+
+- The officers never pick you as a target. The gangs are still
+  theirs.
+- The car won't drive into you: if its next step would overlap you, it
+  waits where it is, until you're out of its lane. (It drives a fixed
+  lane, so it can't steer round you; the road graph, 10.13, is the
+  start of that.)
+- It doesn't arrest you, even if you walk into it.
+
+Watch mode has no player: byte-identical to 10.08 for 12 seeds. A gdb
+script stood you in Lee Blvd's eastbound lane with a police car coming
+from 200 px behind, for 150 ticks with no spawn protection: the car
+stopped with its bumper 1 px short of you and waited, and you kept
+all 150 health, unarrested. Stepping out of the lane, the car drove
+on.
+
+The same play test: the city is "relatively easy to avoid". That's a
+note in the plan, for the new encounters (Phase C) and the police and
+dog frequencies.
