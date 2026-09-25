@@ -6,16 +6,16 @@ pre-drawn map. Stage 8 is about the look, one drawing-only step at a
 time, each proven not to change the game (same seed → byte-identical
 `soldiers`, `pickups`, `rng_state` and `ticks` as the step before).
 
-Done so far: soldier sprites (8.01), detailed objects (8.02), props
-and shadows (8.03), ground effects (8.04). Next: day and night
-(8.05). Stage 9 is
+Done: soldier sprites (8.01), detailed objects (8.02), props and
+shadows (8.03), ground effects (8.04), day and night (8.05), and a
+camera you can zoom and move (8.06). Stage 9 is
 scale: more soldiers, more gangs, a bigger or scrolling city.
 
 ## Build
 
 ```bash
 make
-./build/01_sprites
+./build/06_camera           # the latest: wheel zooms, W A S D pans
 STAGGER=0 ./batch.sh 48      # headless, 4 games at a time
 ```
 
@@ -208,3 +208,80 @@ don't get the standing soldiers' foot shadow.
 Frames from gdb at 0:25 and at the end of a game. By the end, the main
 battle zone is densely marked with blood: a lot, but it stays where
 the fighting actually was.
+
+## `05_night.asm` — day and night
+
+Time passes during a game. A whole day takes `DAY_TICKS` (14,400
+ticks, 4 minutes), so a one-minute game covers about six hours. Some
+games start in sunshine and end in the dark, some go from night into
+dawn. The scoreboard shows the time: `NEIGHBORHOOD 0:15 10:30 PM`.
+
+- **Ambient light** comes from keyframes (night until 5:00, dawn at
+  6:30, day 8:00 to 5:30 PM, dusk at 7:00 PM, night from 8:30 PM),
+  interpolated per channel. Day is untouched, dusk turns orange, and
+  night is dark blue.
+- **At night the light comes from:** the 21 streetlights (they switch
+  on when ambient drops below about three-quarters of daylight), the
+  gangs' lit lobbies with light spilling out of their doors (the
+  generator now writes out `door_lights`), the police car's light bar
+  and two pools of headlight ahead of it, and muzzle flashes (the
+  first two frames of every shot).
+- **Tracers and sparks are drawn after the lighting,** so gunfire is
+  bright in the dark.
+- **Starting time:** scrambled from the game's seed (`deco_hash` of
+  `game_seed`), or `TIME=h` (0–23) to pick one: `TIME=21 ./build/05_night`.
+
+**How it's drawn** (`light_scene`, once a frame, windowed only):
+
+1. **The light map:** one byte per 2×2 pixels (640×360), cleared to 0.
+   Each light adds a round falloff kernel, `peak × (1 − d²/r²)` (no
+   square root), saturating at 255. Three kernels are built once:
+   lamp, mid and small. A lit lobby is `light_rect`, a flat add over
+   its floor.
+2. **The tables:** for each light level L (0–255) and channel, the
+   scale is ambient + (lamp colour − ambient) × L / 255, but never
+   darker than ambient, so a lamp at noon does nothing. That's 768
+   numbers, rebuilt each frame from the time of day.
+3. **The pass:** every field pixel is split into R, G and B, each
+   multiplied by its table entry for the pixel's light level, and
+   put back together. At full daylight the whole pass is skipped.
+
+**Cost:** a night game and a noon game (same seed, 4,452 ticks each)
+took 71.7 s of wall time each, so the pass fits inside the 16 ms
+frame.
+
+**Verification:** seed 4242 at night and seed 77 at dusk ended
+byte-identical to 8.04. Frames from gdb at 10:30 PM (pools of
+lamplight on the sidewalks, the lobbies glowing, dark blue everywhere
+else) and at 7:30 PM (dusk orange, the lamps just coming on).
+
+## `06_camera.asm` — zoom and pan
+
+- **The mouse wheel** zooms in and out over six steps (1×, 1.25×,
+  1.5×, 2×, 2.7×, 4×) toward whatever is under the cursor: the
+  field point under the mouse stays under the mouse.
+- **W A S D** move the camera while zoomed in: `PAN_SPEED` (8)
+  screen pixels a frame at any zoom, clamped to the map's edges.
+- **The scoreboard strip** stays put, full size.
+
+**How:** the frame is still drawn whole, 1280×744, exactly as before.
+The camera is only an `SDL_Rect` (`cam_src`): which part of the field
+`SDL_RenderCopy` scales up to fill the window. The scoreboard is a
+second `SDL_RenderCopy`, 1:1. SDL's default scaling is nearest
+neighbour, which keeps the pixel art crisp. Zooming around the
+cursor works out the field point under the mouse
+(`cam + mouse × view / screen`), changes the view size from the
+`zoom_view_w` table (height is 9/16 of it), and moves `cam` so that
+point is back under the mouse. W A S D come from
+`SDL_GetKeyboardState`, an array SDL keeps up to date. The wheel is
+the `SDL_MOUSEWHEEL` event's `y`.
+
+Nothing about the game or the drawing changes, and headless runs
+never see it.
+
+**Verification:** in gdb, on a windowed game on the dummy driver:
+three wheel clicks in gave a 640×360 view (2×), ten out clamped
+back to 1280×720, five in gave 320×180 (4×), and faking the D key
+held in SDL's keyboard array moved the view 2 field pixels a frame
+at 4× (8 screen pixels). Seed 77 ended byte-identical to 8.05. What
+the zoomed window looks like can only be checked by using it.

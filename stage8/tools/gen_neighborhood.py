@@ -374,7 +374,9 @@ def nasm():
     block("bg_ground", ground, col, "the look, layer 1: ground (x, y, w, h, colour), drawn in order")
     block("bg_shadows", shadows, lambda t: ", ".join(map(str, t)), "layer 2: shadows (x, y, w, h): darken what's there")
     block("bg_objects", objs, col, "layer 3: buildings, cars, dumpsters, fences, trees, lamps")
-    block("street_lamps", lamps, lambda t: ", ".join(map(str, t)), "streetlights: x, y (their 8x8 heads), for the night (8.04)")
+    block("street_lamps", lamps, lambda t: ", ".join(map(str, t)), "streetlights: x, y (their 8x8 heads), for the night (8.05)")
+    doors = [(x + w // 2, y + h // 2) for k in ('west', 'east') for x, y, w, h in door_rects(*complexes[k])]
+    block("door_lights", doors, lambda t: ", ".join(map(str, t)), "complex doorways: centre x, y, where lobby light spills out (8.05)")
     out.append(";; ---- END MAP DATA ----")
     return "\n".join(out)
 

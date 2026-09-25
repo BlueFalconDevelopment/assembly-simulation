@@ -2,7 +2,7 @@
 
 ## Status (as of 2026-09-24) — read this first when picking the project back up
 
-**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has sixteen post-roadmap steps. **Stage 8 (graphics) has started. Latest build: `stage8/04_ground.asm`** (~18,000 lines, about 11,700 of them generated background data), map from `stage8/tools/gen_neighborhood.py`, sprites from `stage8/tools/gen_sprites.py`. Stage 8's steps are listed in `stage8/README.md`. Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
+**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has sixteen post-roadmap steps. **Stage 8 (graphics) has started. Latest build: `stage8/06_camera.asm`** (~18,900 lines, about 11,700 of them generated background data), map from `stage8/tools/gen_neighborhood.py`, sprites from `stage8/tools/gen_sprites.py`. Stage 8's steps are listed in `stage8/README.md`. Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
 
 | Step | File | Result |
 |---|---|---|
@@ -26,6 +26,8 @@
 | 8.02 | `stage8/02_details` | pixel-art pickups (pistol, shotgun), police car (4 directions, flashing light bar), dog (run cycle, faces its way), detailed parked cars; `draw_sprite_ex` (any size, mirror, flip). Drawing only |
 | 8.03 | `stage8/03_props` | shadows (baked in for buildings, cars, trees; oval ones under moving soldiers, dog, walker, police car), trees, bushes, detailed dumpsters, chain-link and wooden fences, AC units, chimneys, streetlights, ground texture. Background in 3 layers. Drawing only |
 | 8.04 | `stage8/04_ground` | blood splats on hits, shell casings, a death animation (the fallen lie there, then leave a pool), all stamped into the background so they persist. Drawing-only randomness (`deco_hash`). Byte-identical to 8.03 |
+| 8.05 | `stage8/05_night` | day and night: a day passes in 4 minutes; dusk and night tints; streetlights, lit lobbies, police headlights and muzzle flashes light the dark (half-res light map + per-channel tables); time on the scoreboard; `TIME=h`. Drawing only |
+| 8.06 | `stage8/06_camera` | mouse-wheel zoom (1×–4×, toward the cursor) and W A S D panning: the camera is a source rectangle for `SDL_RenderCopy`; the frame is drawn exactly as before |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
@@ -44,10 +46,9 @@
 
 ### Next steps (the user picks; agreed order: graphics, then scale)
 
-1. **8.05 Day and night:** the time cycles during a game; streetlights, headlights and muzzle flashes light the dark.
-2. **Stage 9, scale:** more soldiers (a performance project; `first_in_line` first), more gangs (3–4 complexes), a bigger single screen and/or a scrolling city with a camera.
-3. Tuning as wanted: the Big Homie (15% comebacks), the police (`FEAR_RADIUS`, `COP_CHANCE`), the dog.
-4. **Publish Part 5** (7.09–7.11). The draft is written: `newPOSTS/Learning x86-64 Assembly Part 5 - Pathfinding, Traffic, and a Scoreboard.md` (uncommitted), with the video embed line at the top. Not published yet because the Netlify credits ran out. 7.12–7.16 and stage 8 would make later parts.
+1. **Stage 9, scale:** more soldiers (a performance project; `first_in_line` first), more gangs (3–4 complexes), a bigger single screen and/or a scrolling city with a camera.
+2. Tuning as wanted: the Big Homie (15% comebacks), the police (`FEAR_RADIUS`, `COP_CHANCE`), the dog.
+3. **Publish Part 5** (7.09–7.11). The draft is written: `newPOSTS/Learning x86-64 Assembly Part 5 - Pathfinding, Traffic, and a Scoreboard.md` (uncommitted), with the video embed line at the top. Not published yet because the Netlify credits ran out. 7.12–7.16 and stage 8 would make later parts.
 
 ### Traps to avoid (hard-won)
 
