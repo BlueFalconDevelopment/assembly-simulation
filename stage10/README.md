@@ -15,15 +15,15 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/04_endless            # the latest: the endless war; wheel zooms, W A S D pans
-MODE=watch ./build/04_endless # last gang standing (the default headless)
+./build/05_on_foot            # the latest: you, on foot in the endless war
+MODE=watch ./build/05_on_foot # last gang standing, no player (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild maps/southside2.* (15 s)
-python3 tools/score_pairs.py build/04_endless       # re-score the home pairs (~40 min)
-PAIR=0 ./build/04_endless                           # a given pair of homes
+python3 tools/score_pairs.py build/05_on_foot       # re-score the home pairs (~40 min)
+PAIR=0 ./build/05_on_foot                           # a given pair of homes
 MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
-python3 tools/gen_sprites.py --write 04_endless/sprites.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/04_endless
+python3 tools/gen_sprites.py --write 05_on_foot/sprites.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/05_on_foot
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -258,3 +258,84 @@ swings of momentum.
 **48 wars** (random pairs): 1,877–2,836 kills each, Crips 1,107 and
 Bloods 1,086 a war on average, the Crips ahead in 30 of 48 (z 1.7),
 no crashes. The Big Homie came out 0.8 and 1.4 times a war, up to 4.
+
+## `05_on_foot/` — you, on foot
+
+`04_endless/`, and you're in it: in game mode, in a window, a courier
+on foot in the middle of the war. Everyone is hostile.
+
+| Control | What it does |
+|---|---|
+| W A S D | walk (3 px a tick, the soldiers' 2), sliding along walls; the camera follows you |
+| right-click | lock onto the enemy nearest the cursor (within 120 px); yellow brackets mark him. Right-click nobody to unlock; the lock breaks when he dies or gets 450 px away |
+| left button | fire: at the lock, when he's in range and in sight (otherwise it holds fire: no ammo wasted); with no lock, at the enemy nearest the cursor (within 40 px); with nobody there, a miss with a tracer toward the cursor. Whoever is first in the line of fire takes the shot |
+| Q | swap pistol and shotgun (an empty gun swaps itself for a loaded one) |
+| walk over a gun | take its ammo: +20 pistol rounds or +8 shotgun shells. The gun turns up again at one of the pair's pickup spots, so the gangs' supply doesn't shrink |
+| wheel | zoom; game mode starts at 2× (at 1× you're 16 px on a 1,280 px screen) |
+
+**Tougher than a gang member:** 150 health against their 100, and it
+comes back (a point every 20 ticks once you've gone 4 seconds
+unhurt); an 85% pistol hit chance against their 60%, 34 damage against
+their 20 (three hits kill), and faster fire (14 ticks against 20).
+The shotgun: 95% and 60 damage inside 80 px, 65% and 30 out to 180.
+60 pistol rounds a life, no shells. Dying shows YOU DIED on the
+scoreboard, and 3 seconds later you're back somewhere safe: a walkable
+spot outside every site, at least 700 px from both homes, 300 px from
+anyone alive and 100 px in from the edges. The scoreboard's middle
+shows your health, gun, ammo and kills; the summary line (when the
+window closes) adds "; you: kills K, deaths D".
+
+**The gangs only come after you up close.** A gang member considers
+you a target only within 450 px, about three blocks
+(`find_nearest_enemy`); beyond that it gets back to the rival gang.
+And you're not a source of the gangs' flow fields, so gangs across
+the map don't converge on you. Stray bullets still hit you.
+
+(That's the second version. The first, from the plan, had 100 health,
+the soldiers' own odds, no pickups, a 28 px aiming radius and every
+gang member on the map after you. The first play test: "aiming feels
+hard", "you feel incredibly underpowered", "can't pick up the guns",
+"the gangsters should ignore you after so many blocks".)
+
+**You're a soldier.** The player is the slot after the two Big Homies
+(`PLAYER`), in a faction of its own (`FACTION_PLAYER` = 2), which the
+hostility table sets at war with both gangs, both ways. So the rest of
+the game handles you with the code it already had: the gangs pick you
+as a target, their shots hit you when you're first in the line of
+fire, you collide like a soldier, you're drawn and shadowed like one
+(a courier's yellow shirt and a brown cap), the police arrest you and
+the loose dog bites you. What's different, in `player.asm`:
+
+- `update_soldiers` skips your slot: `update_player` moves you, from
+  the keyboard and the mouse, once a tick before the soldiers.
+- Your `lives_left` is 0, so the generic respawn never books you, and
+  neither kill path drops your pistol: `update_player` brings you back.
+- Your shots go through `event_damage` (spawn protection counts; a
+  kill drops the victim's gun and books its respawn, as usual) and a
+  kill of an enemy scores for your faction.
+- Your own RNG, `player_rng`, seeded from the game's seed: nothing you
+  do moves the soldiers' random numbers.
+- A missed shot's tracer aims at a point: `spawn_effect` takes target
+  −1 to mean `fx_dst`, as shooter −1 already meant `fx_src`.
+
+**Only in game mode, in a window** (`player_on`). Watch mode and
+`HEADLESS` have no player: the end state is identical to 10.04's for
+12 seeds headless and one windowed.
+
+**Tested with a bot.** The dummy video driver has no keyboard or
+mouse, so a gdb script plays: every tick it aims at the nearest enemy
+and walks toward it (writing SDL's keyboard state array) until it's
+within 190 px, then holds the button, right-clicking every 2 seconds
+to lock on. It has no pathfinding, so when a building stops it for a
+second it hops to a clear spot near its target (checked with the
+game's own `is_box_blocked`). Over 4,859 ticks: 30 kills, 7 deaths (the
+first version's player: 2 kills, 6 deaths in 4,000). A second script
+stood the player on a pistol and a shotgun: 60 → 80 rounds, 0 → 8
+shells, and both guns turned up elsewhere.
+
+**A bug the bot found: `imul r8d, edx, edx`.** The three-operand
+`imul` takes an immediate as its third operand, not a register, but
+NASM assembled it anyway, into bytes the CPU refuses: SIGILL, the
+moment `enemy_near` first ran (the first right-click). The bot saw it
+as a gdb MemoryError (it was reading a dead process) until gdb was
+told to stop on SIGILL. Now it's `mov r8d, edx` then `imul r8d, edx`.
