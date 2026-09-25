@@ -15,16 +15,16 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/06_bicycle            # the latest: you, on a bike in the endless war
-MODE=watch ./build/06_bicycle # last gang standing, no player (the default headless)
+./build/07_deliveries         # the latest: you, on a bike, making deliveries
+MODE=watch ./build/07_deliveries  # last gang standing, no player (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
-python3 tools/gen_southside.py                      # rebuild maps/southside2.* (15 s)
-python3 tools/score_pairs.py build/06_bicycle       # re-score the home pairs (~40 min)
-PAIR=0 ./build/06_bicycle                           # a given pair of homes
+python3 tools/gen_southside.py                      # rebuild maps/southside3.* (17 s)
+python3 tools/score_pairs.py build/07_deliveries     # re-score the home pairs (~40 min)
+PAIR=0 ./build/07_deliveries                         # a given pair of homes
 MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
-python3 tools/gen_sprites.py --write 06_bicycle/sprites.asm
-python3 tools/gen_vehicles.py --write 06_bicycle/vehicle_art.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/06_bicycle
+python3 tools/gen_sprites.py --write 07_deliveries/sprites.asm
+python3 tools/gen_vehicles.py --write 07_deliveries/vehicle_art.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/07_deliveries
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -412,3 +412,60 @@ W swung it round to north (slowing to 43 in the turn), no keys braked
 it to 0, and E put the rider off to the side and back on. Another held
 a Crip in its path until contact: 100 → 84, shoved 12 px aside, the
 bike slowed to 42 and rode on through, back at top speed 20 px later.
+
+## `07_deliveries/` — deliveries
+
+`06_bicycle/`, with the job (`deliveries.asm`): pick up a package at a
+business, deliver it to a house, get paid.
+
+| Control | |
+|---|---|
+| 1, 2, 3 | take a job from the board |
+| X | drop the job (and the package) |
+
+**The board** is the scoreboard's new second row (it's two rows now,
+`HUD_H` 40: the window is 16 px taller). Your money is on the left;
+in the middle, three offers, each a business and a house at least
+600 px apart: "1) $72 1.2KM !!!!!  2) $34 0.9KM  3) $38 1.1KM". Take
+one and the row says where to go, with a yellow marker round the
+business's door (and a yellow pip at the edge of the screen pointing
+to it when it's off-screen). Pick the package up by standing there;
+now it's a green marker at the house, and a clock. On time, the full
+pay; late, half. Dying loses the package, and X drops it; either way,
+three new offers. The summary line when the window closes adds your
+deliveries and money.
+
+**Pay and time.** $10, plus $1 for every 60 px of straight line, plus
+$6 for each level of danger (0 to 5): the gang members alive within
+200 px of 8 points along the line from the business to the house,
+when the offer is made, halved. So a short run through a war zone
+pays better than a long quiet one ($72 for 1.2 km at danger 5, $34 for
+0.9 km at none, in the test). The clock: 300 ticks plus 3/4 of a tick
+per px. All of it uses the player's RNG.
+
+**The map's new lists** (`maps/southside3.*`, `tools/gen_southside.py`):
+`biz_points`, a door spot for each real building (the side nearest a
+street first), and `house_points`, one for each generated house (on
+the side facing its street). A spot is kept only if a soldier's box
+fits there and it's in the main connected part of the map with every
+fair pair of homes: 76 of 76 businesses, 572 of 595 houses. The first
+try put the spots 2 px from the wall, and only 204 houses passed: a
+9 px grid cell is walkable only if a 24 px window is clear, and a box
+2 px from a wall is in cells that aren't. At 10 px out they pass. The
+background is byte-identical to `southside2`'s.
+
+**Four glyphs.** The font had no `$`, `)`, `+` or `>`; now it does.
+
+**A bug found on the way: the summary line had outgrown its buffer.**
+`msg_buf` was 160 bytes; with the home pair (10.03) and your stats
+(10.05) the line reached 233 characters, running past it into
+`title_buf` and, from this step, into the job board's `offers`. It's
+512 now. (In 10.03–10.06 it only ever wrote past the end at the very
+end of a game, into buffers nobody read again.)
+
+**Tests.** Watch mode has no player: byte-identical to 10.06 for 12
+seeds. A gdb script took job 2 (state 1), stood at the business (state
+2, the clock at 1,388 ticks), then at the house: $34, one delivery. It
+took another and ran its clock out before arriving: $56 offer, $28
+paid. And X dropped a third. A frame capture showed the board, the
+pick-up line and the edge pip.

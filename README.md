@@ -170,6 +170,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `04_endless` | Two modes: `watch` (last gang standing, for tests) and `game`, an endless war where the Big Homie keeps coming back and dropped guns move on |
 | `05_on_foot` | You: a courier on foot in the endless war. W A S D to walk, right-click to lock on, left-click to shoot, Q to swap guns, walk over guns for ammo; the gangs come after you when you get close |
 | `06_bicycle` | Your bike: W A S D point where to ride, E gets on and off; momentum, sliding off walls, bumping through soldiers. The first row of a vehicle table |
+| `07_deliveries` | The job: a board of three offers (1, 2, 3), a package to pick up at a business and deliver to a house on the clock, pay by distance and danger |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

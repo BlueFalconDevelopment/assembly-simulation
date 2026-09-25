@@ -66,7 +66,10 @@ SCORES = os.path.join(MAPS, "pair_scores.json")
 # the map's files: a new name whenever the format changes, so older steps
 # keep building against the files they were made with (southside.inc is
 # 9.02's format, from stage9/tools/gen_southside.py)
-MAP_FILE = "southside2"
+MAP_FILE = "southside3"       # 10.07: + the delivery points (southside2 is 10.03's)
+DOOR_GAP = 10                 # a door spot: a soldier box this far out from a wall
+                              # (2 was too close for the 9 px grid to see: 204 of 595 houses)
+MIN_JOB = 600                 # px: the game won't offer a delivery shorter than this
 FAIR = 0.045                   # a pair is fair within 50% +- this, over
 FAIR_GAMES = 480               # at least this many games
 
@@ -310,6 +313,7 @@ def layout():
     m.lamps, m.pickups, m.doors = [], [], {}
     m.cwalls, m.lobbies = {}, {}
     m.plugs = []                                 # closed sites' doors, per pair
+    m.biz_doors, m.house_doors = [], []          # delivery spots, candidates (10.07)
     m.fence_px = []                              # (x, y, w, h, style) drawn later
     m.cars = []                                  # so a car can be taken away again
     m.gone_objs, m.gone_shadows = set(), set()
@@ -396,6 +400,8 @@ def pairs(m):
         cand = [p for p in cand if fair(*p)]
         assert cand, "no fair pairs in " + SCORES
     m.pairs, m.pair_pickups = [], []
+    ok_biz = [list(c) for c in m.biz_doors]      # candidates still good, per place
+    ok_house = [list(c) for c in m.house_doors]
     for a, b in cand:
         m.plugs = [d for k in range(n) if k not in (a, b) for d in m.site_doors[k]]
         connect(m)
@@ -406,7 +412,14 @@ def pairs(m):
         pickups(m, a, b)
         m.pairs.append((a, b))
         m.pair_pickups.append(m.pickups)
+        # delivery spots: clear, and reachable with this pair too
+        for lst in (ok_biz, ok_house):
+            for cs in lst:
+                cs[:] = [c for c in cs if not box_hits(m, c[0], c[1], c[0] + SZ, c[1] + SZ)
+                         and in_main(m, c[0], c[1])]
     m.plugs = []
+    m.biz_points = [cs[0] for cs in ok_biz if cs]
+    m.house_points = [cs[0] for cs in ok_house if cs]
 
 
 def site_key(m, a, b):
@@ -583,6 +596,12 @@ def buildings(m):
                 continue
             add_wall(m, r)
             roof(m, r, rnd, flat=True)
+            # its door spots, street side first (deliveries, 10.07)
+            x, y, w, h = r
+            cands = [(x + w // 2 - 8, y - 16 - DOOR_GAP), (x + w // 2 - 8, y + h + DOOR_GAP),
+                     (x - 16 - DOOR_GAP, y + h // 2 - 8), (x + w + DOOR_GAP, y + h // 2 - 8)]
+            cands.sort(key=lambda c: 0 if m.rmask.get(c[0] + 8, c[1] + 8) else 1)
+            m.biz_doors.append(cands)
 
 
 def fence_rects(pts, step=4):
@@ -919,6 +938,13 @@ def houses(m, roads):
                     if m.occ.free(r[0] - 4, r[1] - 4, r[2] + 8, r[3] + 8):
                         add_wall(m, r, 'house')
                         roof(m, r, rnd, flat=False)
+                        # its door spot, on the street side (10.07)
+                        x, y, w_, h_ = r
+                        if horiz:
+                            door = (x + w_ // 2 - 8, y - 16 - DOOR_GAP if side > 0 else y + h_ + DOOR_GAP)
+                        else:
+                            door = (x - 16 - DOOR_GAP if side > 0 else x + w_ + DOOR_GAP, y + h_ // 2 - 8)
+                        m.house_doors.append([door])
                 t += LOT
 
 
@@ -1504,6 +1530,9 @@ def write(m):
     block("pair_sites", m.pairs, "the pairs a game can pick: site, site")
     block("pair_pickups", [p for pp in m.pair_pickups for p in pp],
           "each pair's weapon pickups, PICKUPS_PER_PAIR a pair: x, y, type")
+    block("biz_points", m.biz_points, "deliveries (10.07): a business's door, where a package is picked up: x, y (a soldier corner)")
+    block("house_points", m.house_points, "... a house's door, where one is dropped off: x, y")
+    out.append(f"    MIN_JOB equ {MIN_JOB}")
     block("street_lamps", m.lamps, "streetlights: x, y (their 8x8 heads)")
     block("cop_routes", m.routes, "police routes: x, y, w, h, dx, dy (a lane, from off the map)")
     block("dog_walks", m.walks, "dog walks: start x, y, dx (along a sidewalk, from off the map)")
