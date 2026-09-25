@@ -6,8 +6,9 @@
 ; you for free: gangs pick you as a target (find_nearest_enemy), their
 ; flow fields lead to you (you're a source for every faction hostile to
 ; you), their shots hit you if you're first in the line of fire, you
-; collide like a soldier, you're drawn and shadowed like one, the
-; police arrest you and the loose dog bites you. What's different:
+; collide like a soldier, you're drawn and shadowed like one, and the
+; loose dog bites you (the police leave you alone: their row of the
+; hostility table, 10.09). What's different:
 ;
 ;   - update_soldiers skips you: your moves come from the keyboard and
 ;     the mouse, here, once a tick, before the soldiers move

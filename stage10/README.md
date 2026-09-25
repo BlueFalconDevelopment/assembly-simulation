@@ -533,22 +533,48 @@ seeds. With a gdb script and `SAVE=` pointing at a scratch file:
 ## `09_police/` — the police leave you alone
 
 `08_shifts/`, after the play test: "the police shouldn't shoot you and
-they should avoid running you over". Three changes to `update_police`:
+they should avoid running you over".
 
-- The officers never pick you as a target. The gangs are still
-  theirs.
-- The car won't drive into you: if its next step would overlap you, it
-  waits where it is, until you're out of its lane. (It drives a fixed
-  lane, so it can't steer round you; the road graph, 10.13, is the
-  start of that.)
-- It doesn't arrest you, even if you walk into it.
+- **The police are a faction** (`FACTION_POLICE` = 3) with a row in
+  the hostility table: the two gangs, not you. `update_police` asks it
+  whom to aim at and whom to arrest, instead of skipping the player's
+  slot. (Their shots only ever hit the soldier they aim at, so none of
+  theirs can hit you.)
+- **The car won't drive into you.** `cop_blocked` looks at the strip
+  just ahead of its bumper (as far as it moves in a tick, plus 4 px),
+  for anyone alive the police won't hurt (you; riding, the whole 24 px
+  bike, not just your 16 px box) or your parked bike. Something there:
+  the car waits. From behind or the side, you don't stop it.
+- **It doesn't wait for ever.** After 2 seconds (`COP_WAIT_MAX`) it
+  turns round and goes back the way it came.
 
-Watch mode has no player: byte-identical to 10.08 for 12 seeds. A gdb
-script stood you in Lee Blvd's eastbound lane with a police car coming
-from 200 px behind, for 150 ticks with no spawn protection: the car
-stopped with its bumper 1 px short of you and waited, and you kept
-all 150 health, unarrested. Stepping out of the lane, the car drove
-on.
+**A code review of the first version** (`/code-review high`) found
+eight things, all real, all fixed here:
+
+1. The car waited for as long as you stood there, with no time limit:
+   no other police car could come, and every gang member within 280 px
+   kept fleeing it instead of fighting you. A safe zone, with the
+   officers shooting for you.
+2. It stopped for you behind it or beside it too: on the bike (faster
+   than the car) you could catch it up and freeze it with you inside it.
+3. On the bike it stopped against your 16 px box, visibly on top of the
+   24 px bike.
+4. The header and this README said "a stray round of theirs is still a
+   round"; their fire can't hit anyone but its target.
+5. `player.asm` still said the police arrest you.
+6. `save.asm` still said gear arrives in 10.09 (10.10 now).
+7. The player was skipped by slot number in three places; the
+   hostility table from 10.02 was made for this.
+8. The same four-edge overlap test was written out twice: now one
+   `rect_hit`.
+
+**Tests.** Watch mode has no player: byte-identical to 10.08 for 12
+seeds. A gdb script played four cases on Lee Blvd, with no spawn
+protection: you in the lane ahead (the bumper stopped 4 px short, the
+car waited, then turned round and drove away); you touching it from
+behind (it kept going); you on the bike in the lane (it stopped 4 px
+clear of the bike's sprite); and you and a Crip beside a car whose
+officers were firing (the Crip went from 100 to 0, you stayed at 150).
 
 The same play test: the city is "relatively easy to avoid". That's a
 note in the plan, for the new encounters (Phase C) and the police and

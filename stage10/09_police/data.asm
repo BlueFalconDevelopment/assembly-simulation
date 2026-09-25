@@ -57,6 +57,8 @@ section .data
     cop_rect     dd 0, 0, 0, 0    ; x, y, w, h
     cop_vel      dd 0, 0          ; dx, dy per tick
     cop_fire     dd 0             ; ticks until the officers fire again
+    cop_wait     dd 0             ; ticks it's waited for you (10.09)
+    cop_strip    dd 0, 0, 0, 0    ; the strip just ahead of its bumper
     COP_ROUTES equ cop_routes_count   ; the routes are in the map
     dog_state    dd DOG_NONE
     walker_x     dd 0
@@ -151,7 +153,8 @@ section .data
         db  0, 1, 1, 0, 0, 0, 0, 0      ; Crips
         db  1, 0, 1, 0, 0, 0, 0, 0      ; Bloods
         db  1, 1, 0, 0, 0, 0, 0, 0      ; the player (10.05)
-        times (MAX_FACTIONS - 3) * MAX_FACTIONS db 0
+        db  1, 1, 0, 0, 0, 0, 0, 0      ; the police: the gangs, not you (10.09)
+        times (MAX_FACTIONS - 4) * MAX_FACTIONS db 0
     rng_state    dq 0         ; xorshift64 state -- must never be 0
 
 

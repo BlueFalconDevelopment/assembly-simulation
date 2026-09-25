@@ -4,7 +4,7 @@
 ; What: 64 bytes, dwords --
 ;    0 magic "CSV1"     4 version (1)      8 money
 ;   12 shifts           16 deliveries      20 kills
-;   24 best shift ($)   28..59 reserved (gear, 10.09 on)
+;   24 best shift ($)   28..59 reserved (gear, 10.10 on)
 ;   60 checksum: the sum of the first 15 dwords, xor SAVE_KEY
 ; When: at the end of every shift, and when the window closes.
 ; How: written to <path>.tmp, then renamed over the save, so a crash

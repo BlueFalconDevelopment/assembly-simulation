@@ -143,33 +143,25 @@ update_police:
     cld
     rep movsd
     mov dword [cop_fire], COP_FIRE_TICKS
+    mov dword [cop_wait], 0
     mov dword [cop_active], 1
 
 .up_drive:
-    ; you in the way (10.09): the car waits rather than run you over
-    lea r10, [soldiers + PLAYER * Soldier_size]
-    cmp dword [r10 + Soldier.health], 0
-    jle .up_move
-    mov eax, [cop_rect]
-    add eax, [cop_vel]            ; where the car would be
-    mov ecx, [r10 + Soldier.x]
-    lea edx, [ecx + SOLDIER_SIZE]
-    cmp edx, eax
-    jle .up_move
-    add eax, [cop_rect + 8]
-    cmp ecx, eax
-    jge .up_move
-    mov eax, [cop_rect + 4]
-    add eax, [cop_vel + 4]
-    mov ecx, [r10 + Soldier.y]
-    lea edx, [ecx + SOLDIER_SIZE]
-    cmp edx, eax
-    jle .up_move
-    add eax, [cop_rect + 12]
-    cmp ecx, eax
-    jge .up_move
-    jmp .up_moved                 ; you're there: wait
+    ; anyone the police won't hurt (you) just ahead: the car waits
+    ; rather than run you over -- for COP_WAIT_MAX ticks, then it turns
+    ; round and goes back the way it came (10.09)
+    call cop_blocked
+    test eax, eax
+    jz .up_move
+    inc dword [cop_wait]
+    cmp dword [cop_wait], COP_WAIT_MAX
+    jl .up_moved
+    neg dword [cop_vel]
+    neg dword [cop_vel + 4]
+    mov dword [cop_wait], 0
+    jmp .up_moved
 .up_move:
+    mov dword [cop_wait], 0
     mov eax, [cop_vel]
     add [cop_rect], eax
     mov eax, [cop_vel + 4]
@@ -193,26 +185,20 @@ update_police:
     lea r12, [soldiers]
     xor ebx, ebx
 .up_touch:
-    cmp ebx, PLAYER
-    je .up_touch_next             ; not you (10.09)
     cmp dword [r12 + Soldier.health], 0
     jle .up_touch_next
-    mov eax, [r12 + Soldier.x]
-    lea ecx, [eax + SOLDIER_SIZE]
-    cmp ecx, [cop_rect]
-    jle .up_touch_next
-    mov ecx, [cop_rect]
-    add ecx, [cop_rect + 8]
-    cmp eax, ecx
-    jge .up_touch_next
-    mov eax, [r12 + Soldier.y]
-    lea ecx, [eax + SOLDIER_SIZE]
-    cmp ecx, [cop_rect + 4]
-    jle .up_touch_next
-    mov ecx, [cop_rect + 4]
-    add ecx, [cop_rect + 12]
-    cmp eax, ecx
-    jge .up_touch_next
+    mov eax, [r12 + Soldier.team]
+    mov ecx, FACTION_POLICE
+    HOSTILE rcx, rcx, rax         ; only those the police go after (10.09)
+    jz .up_touch_next
+    mov edi, [r12 + Soldier.x]
+    mov esi, [r12 + Soldier.y]
+    mov edx, SOLDIER_SIZE
+    mov ecx, SOLDIER_SIZE
+    lea r8, [cop_rect]
+    call rect_hit
+    test eax, eax
+    jz .up_touch_next
     ; arrested: out of the game for good
     mov dword [r12 + Soldier.health], 0
     mov edx, [r12 + Soldier.weapon]
@@ -251,13 +237,15 @@ update_police:
     mov r12d, COP_RANGE * COP_RANGE + 1
     xor ebx, ebx
 .up_aim:
-    cmp ebx, PLAYER
-    je .up_aim_next               ; they don't shoot you (10.09)
     imul eax, ebx, Soldier_size
     lea rcx, [soldiers]
     add rcx, rax
     cmp dword [rcx + Soldier.health], 0
     jle .up_aim_next
+    mov eax, [rcx + Soldier.team]
+    mov edx, FACTION_POLICE
+    HOSTILE rdx, rdx, rax         ; only those the police go after (10.09)
+    jz .up_aim_next
     mov eax, [rcx + Soldier.x]
     sub eax, r13d
     imul eax, eax
@@ -314,6 +302,132 @@ update_police:
     pop r13
     pop r12
     pop rbx
+    ret
+
+
+; int rect_hit(int x: edi, int y: esi, int w: edx, int h: ecx,
+;              Rect *r: r8) -> eax: 1 if [x, x+w) x [y, y+h) overlaps
+; the rectangle at r8 (x, y, w, h). A leaf (10.09)
+rect_hit:
+    xor eax, eax
+    lea r9d, [edi + edx]
+    cmp r9d, [r8]
+    jle .rh_done
+    mov r9d, [r8]
+    add r9d, [r8 + 8]
+    cmp edi, r9d
+    jge .rh_done
+    lea r9d, [esi + ecx]
+    cmp r9d, [r8 + 4]
+    jle .rh_done
+    mov r9d, [r8 + 4]
+    add r9d, [r8 + 12]
+    cmp esi, r9d
+    jge .rh_done
+    mov eax, 1
+.rh_done:
+    ret
+
+
+; int cop_blocked(void) -> eax: 1 if anything the police won't hurt is
+; in the strip just ahead of the car's bumper (as far as it moves in a
+; tick, plus COP_GAP): a living soldier the police aren't hostile to --
+; you; riding, the whole bike -- or your parked bike. Only ahead: from
+; behind or the side, you don't stop it (10.09)
+;   rbx a soldier   r12d its index
+cop_blocked:
+    push rbx
+    push r12
+    sub rsp, 8
+    ; the strip: the car's width, from its front edge forward
+    mov eax, [cop_rect]
+    mov ecx, [cop_rect + 4]
+    mov edx, [cop_rect + 8]
+    mov r8d, [cop_rect + 12]
+    mov r9d, [cop_vel]
+    test r9d, r9d
+    jz .cb_vertical
+    jl .cb_west
+    add eax, edx                  ; east: from the right edge
+    lea edx, [r9d + COP_GAP]
+    jmp .cb_strip
+.cb_west:
+    neg r9d
+    lea edx, [r9d + COP_GAP]
+    sub eax, edx
+    jmp .cb_strip
+.cb_vertical:
+    mov r9d, [cop_vel + 4]
+    test r9d, r9d
+    jl .cb_north
+    add ecx, r8d                  ; south: from the bottom edge
+    lea r8d, [r9d + COP_GAP]
+    jmp .cb_strip
+.cb_north:
+    neg r9d
+    lea r8d, [r9d + COP_GAP]
+    sub ecx, r8d
+.cb_strip:
+    mov [cop_strip], eax
+    mov [cop_strip + 4], ecx
+    mov [cop_strip + 8], edx
+    mov [cop_strip + 12], r8d
+    ; the living the police won't hurt
+    lea rbx, [soldiers]
+    xor r12d, r12d
+.cb_soldier:
+    cmp dword [rbx + Soldier.health], 0
+    jle .cb_next
+    mov eax, [rbx + Soldier.team]
+    mov ecx, FACTION_POLICE
+    HOSTILE rcx, rcx, rax
+    jnz .cb_next                  ; theirs to hit: no waiting
+    mov edi, [rbx + Soldier.x]
+    mov esi, [rbx + Soldier.y]
+    mov edx, SOLDIER_SIZE
+    mov ecx, SOLDIER_SIZE
+    cmp r12d, PLAYER
+    jne .cb_box
+    cmp dword [riding], 0
+    je .cb_box
+    call bike_box                 ; riding: the bike's size, not yours
+.cb_box:
+    lea r8, [cop_strip]
+    call rect_hit
+    test eax, eax
+    jnz .cb_done
+.cb_next:
+    add rbx, Soldier_size
+    inc r12d
+    cmp r12d, TOTAL_SOLDIERS
+    jb .cb_soldier
+    ; your parked bike
+    xor eax, eax
+    cmp dword [player_on], 0
+    je .cb_done
+    cmp dword [riding], 0
+    jne .cb_done
+    cmp dword [veh_health], 0
+    jle .cb_done
+    call bike_box
+    lea r8, [cop_strip]
+    call rect_hit
+.cb_done:
+    add rsp, 8
+    pop r12
+    pop rbx
+    ret
+
+; bike_box -> edi, esi, edx, ecx: the bike's sprite square (a leaf)
+bike_box:
+    mov edi, [veh_x]
+    sar edi, 4
+    sub edi, VEHICLE_SPRITE / 2
+    mov esi, [veh_y]
+    sar esi, 4
+    sub esi, VEHICLE_SPRITE / 2
+    mov edx, VEHICLE_SPRITE
+    mov ecx, VEHICLE_SPRITE
     ret
 
 

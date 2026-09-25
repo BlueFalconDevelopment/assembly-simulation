@@ -4,11 +4,21 @@
 ; 08_shifts/, after the play test: "the police shouldn't shoot you and
 ; they should avoid running you over". In update_police (events.asm):
 ;
-;   - the officers never pick you as a target (the gangs are still
-;     theirs, and a stray round of theirs is still a round)
-;   - the car won't drive into you: if its next step would overlap
-;     you, it waits where it is until you're out of its lane
-;   - it doesn't arrest you either, if you walk into it
+;   - the police are a faction (FACTION_POLICE) with a row in the
+;     hostility table: the two gangs, not you. The officers only aim
+;     at, and the car only arrests, those it says (their shots hit
+;     only the soldier they aim at, so none of theirs hits you)
+;   - the car won't drive into you: if you (on the bike, the whole
+;     bike; or your parked bike) are in the strip just ahead of its
+;     bumper, it waits -- and after COP_WAIT_MAX ticks (2 s) turns
+;     round and goes back the way it came. From behind or the side,
+;     you don't stop it
+;
+; (A review of the first version found: the car waited for ever -- a
+; safe zone with police turrets, and no other police car could come;
+; a player touching it from behind or the side froze it; on the bike it
+; stopped on top of you; and the comments promised stray police rounds
+; that can't happen.)
 ;
 ; Watch mode has no player, so it's the same game as 10.08.
 ;

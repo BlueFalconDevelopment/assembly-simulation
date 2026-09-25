@@ -53,6 +53,9 @@ FACTION_CRIPS  equ 0
 FACTION_BLOODS equ 1
 NUM_GANGS      equ 2          ; factions 0 .. NUM_GANGS-1 are gangs
 FACTION_PLAYER equ 2          ; you (10.05)
+FACTION_POLICE equ 3          ; the police: their row says whom they go after (10.09)
+COP_WAIT_MAX   equ 120        ; ticks the car waits for you before turning round (10.09)
+COP_GAP        equ 4          ; px it keeps clear ahead of its bumper
 %if MAX_FACTIONS != 8 && MAX_FACTIONS != 4 && MAX_FACTIONS != 2
     %error "MAX_FACTIONS must be 2, 4 or 8"
 %endif
