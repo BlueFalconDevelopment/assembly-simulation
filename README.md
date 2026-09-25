@@ -3,12 +3,13 @@
 A 50-vs-50 battle simulation written by hand in x86-64 assembly, built
 up from "never written assembly" one stage at a time.
 
-![50 vs 50 battle: blue and red soldiers fighting through the gap in a wall, with yellow pistol tracers, orange shotgun fans, white knife thrusts and hit flashes](docs/demo.gif)
+![Crips in blue and Bloods in red fight down a residential street between rows of houses, with pistol tracers, shotgun blasts, blood and shell casings on the road](docs/south_side.gif)
 
-*Stage 7.06, about 6 seconds from the middle of a fight. Blue and red
-soldiers crowd into the gap in the wall. Yellow lines are pistol
-tracers, orange fans are shotgun blasts, short white lines are knife
-thrusts, and a white square is a soldier being hit.*
+*Stage 9.03, about 5 seconds of a fight on the south side map, with
+the camera zoomed in 2×. The Bloods (red) hold the corner while the
+Crips (blue) push up the street. Yellow lines are pistol tracers,
+orange fans are shotgun blasts, and the blood and brass stay where
+they fall. See [Progression](#progression) for how it got here.*
 
 The idea comes from Chris Sawyer, who wrote about 99% of RollerCoaster
 Tycoon (1999) in hand-written assembly with a thin layer of C for
@@ -16,8 +17,9 @@ Windows. This project works in the same spirit, at a smaller scale.
 Everything is NASM: the AI, combat, pathing, line of sight, line
 drawing, the random number generator, even turning numbers into text.
 SDL2 is called directly from assembly for the window, input and blitting
-pixels. The final binary imports 15 SDL2 functions and libc's startup
-routine, and nothing else.
+pixels. The latest build imports 16 SDL2 functions and four from libc
+(the startup routine, plus `getenv`, `atoi` and `strtoull` to read its
+settings), and nothing else.
 
 ## Highlights
 
@@ -40,6 +42,37 @@ routine, and nothing else.
   real biases that were invisible in any single game, including one
   exactly one pixel wide. See [Verification](#verification).
 
+## Progression
+
+The same project at each stage, from the first hand-plotted pixels to
+a city's south side. Every image is a real frame from that stage's
+program, read back from the renderer in gdb.
+
+| | |
+|:---:|:---:|
+| ![A sky, hills drawn as lines, a strip of grass and some rectangles](docs/progress/01_stage3_scene.png) | ![The same sky, hills and grass, with an orange square bouncing across](docs/progress/02_stage4_double_buffer.png) |
+| **Stage 3.** The first picture: a pixel buffer, `fill_rect`, and Bresenham lines for the hills, all computed by hand | **Stage 4.** Animation: a bouncing square, double buffered |
+| ![A few blue and red squares facing each other on a green field](docs/progress/03_stage6a_8v8.png) | ![A field split by a wall with a gap, a few blue and red soldiers near it](docs/progress/04_stage6b_cover.png) |
+| **Stage 6a.** The battle sim at 8 vs 8: soldiers, seeking, knives, pistols, shotguns | **Stage 6b.** A wall with a gap: movement around it, and line of sight for guns |
+| ![Fifty blue and fifty red squares crowded at the gap in the wall](docs/progress/05_stage6c_50v50.png) | ![Soldiers fighting at the gap, with yellow tracers and white hit flashes](docs/progress/06_stage7_attack_fx.png) |
+| **Stage 6c.** 50 vs 50, all piling into the gap | **Stage 7.04.** Attack animations: tracers, shotgun fans, knife thrusts, hit flashes |
+| ![An arena of four wall blocks with gaps, soldiers fighting in the crossings](docs/progress/07_stage7_arenas.png) | ![A grid of pillars with a scoreboard under the field reading BLUE 31, PILLARS, 0:05, RED 26](docs/progress/08_stage7_scoreboard.png) |
+| **Stage 7.07.** Five mirrored arenas (this is Crossroads) | **Stage 7.11.** A scoreboard in a hand-made 5×7 font |
+| ![A city block with roads, buildings, a parking lot and two apartment complexes, one blue and one red](docs/progress/09_stage7_neighborhood.png) | ![The same neighborhood with pixel-art soldiers, cars and buildings](docs/progress/10_stage8_sprites.png) |
+| **Stage 7.13.** The neighborhood: Crips and Bloods out of their apartment complexes, cars as cover | **Stage 8.01.** Hand-made pixel-art soldiers: 8 facings, a walk cycle, gang colours |
+| ![The neighborhood with trees, shadows, fences and rooftop details](docs/progress/11_stage8_props.png) | ![The neighborhood at night, lit by streetlights and the lobbies](docs/progress/12_stage8_night.png) |
+| **Stage 8.03.** Props and shadows: trees, fences, dumpsters, rooftop units | **Stage 8.05.** Day and night, with streetlights and lit lobbies |
+| ![A close-up of a fight on the street beside the parking lot, blood on the road](docs/progress/13_stage8_camera.png) | ![A zoomed-out view of the neighborhood repeated in a 4 by 4 grid](docs/progress/14_stage9_world.png) |
+| **Stage 8.06.** A camera: zoom in toward the cursor, pan with W A S D | **Stage 9.01.** A map 16 screens big, drawn only where the camera looks (a stand-in, zoomed out) |
+| ![Blocks of houses with gable roofs, hedges and trees, and a fight in the streets](docs/progress/15_stage9_south_side.png) | ![A zoomed-out view of dozens of blocks of houses and the two gang complexes](docs/progress/16_stage9_zoomed_out.png) |
+| **Stage 9.02.** Real streets from OpenStreetMap, compressed about 5×: generated houses along them | **Stage 9.02**, zoomed all the way out: a quarter of the map, with both homes |
+| ![The same zoomed-out view at night, streetlights along every street](docs/progress/17_stage9_night.png) | ![The whole south side map: street grid, park, airport with a runway, wrecker lots and the expressway](docs/progress/18_stage9_map.png) |
+| **Stage 9.02** at night | **The whole south side map** (from its generator): neighborhoods, a park in the south-west, an airport in the middle south, wrecker lots in the south-east |
+
+And stage 7.06, the demo this README used to open with:
+
+![50 vs 50 battle: blue and red soldiers fighting through the gap in a wall, with yellow pistol tracers, orange shotgun fans, white knife thrusts and hit flashes](docs/demo.gif)
+
 ## Quick start
 
 Linux x86-64 (developed on Ubuntu):
@@ -47,9 +80,9 @@ Linux x86-64 (developed on Ubuntu):
 ```bash
 sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
-cd assembly-simulation/stage8
+cd assembly-simulation/stage9
 make
-./build/06_camera            # Crips vs Bloods; mouse wheel zooms, W A S D pans; TIME=21 for night
+./build/03_bfs               # Crips vs Bloods; mouse wheel zooms, W A S D pans; TIME=21 for night
 ```
 
 The winner is printed to the terminal when one team is wiped out, for
