@@ -51,11 +51,24 @@ ROAD_W = dict(motorway=96, primary=60, primary_link=30, secondary=52, tertiary=4
               residential=36, unclassified=36)
 SIDEWALK = 8
 RNG = random.Random(9002)     # fixed: the same map every build
-# the gangs' homes: two street corners. The complex is two blocks joined
-# across the second street, on the side of the first street that faces
-# the other home
-HOMES = dict(west=('Southwest 20th Street', 'Southwest Monroe Avenue'),
-             east=('Southwest 9th Street', 'Southwest Jefferson Avenue'))
+# the gangs' homes (10.03): SITES apartment complexes, each two blocks
+# joined across an avenue beside a street, picked spread out over the
+# neighborhoods, starting from the two 9.02 homes (the corner, and
+# which side of the street). Any two far enough apart make a candidate
+# pair; batches score each pair (tools/score_pairs.py, into
+# maps/pair_scores.json) and only the fair ones go in the map. Each
+# game picks one of those pairs; the other sites are closed buildings.
+FIRST_SITES = [('Southwest 20th Street', 'Southwest Monroe Avenue', True),
+               ('Southwest 9th Street', 'Southwest Jefferson Avenue', False)]
+SITES = 6
+PAIR_DIST = (1500, 3600)       # centre to centre, px
+SCORES = os.path.join(MAPS, "pair_scores.json")
+# the map's files: a new name whenever the format changes, so older steps
+# keep building against the files they were made with (southside.inc is
+# 9.02's format, from stage9/tools/gen_southside.py)
+MAP_FILE = "southside2"
+FAIR = 0.045                   # a pair is fair within 50% +- this, over
+FAIR_GAMES = 480               # at least this many games
 
 
 def rgb(r, g, b):
@@ -233,7 +246,6 @@ def layout():
     zd.polygon([(x11, ymerge), *[p for p in dg if p[0] <= x6], (x6, y6), (x6, H), (x11, H)], fill=2)
     zd.rectangle((x6, y_south, W, H), fill=3)
     m.zone = zone
-    m.homes = {k: near_point(m, a, b) for k, (a, b) in HOMES.items()}
 
     # ---- roads: the ground image, and a mask of road + sidewalk ----
     ground = Image.new("RGB", (W, H), C['grass'])
@@ -248,11 +260,9 @@ def layout():
     for hw, _, ln in roads:
         thick(rd, ln, ROAD_W[hw], 3 if hw == 'motorway' else 2)
     # the complexes cover their joined blocks: find the blocks first
-    m.complexes = {}
     rmask = to_mask(road_img)
-    for k, (hx, hy) in m.homes.items():
-        m.complexes[k] = complex_at(rmask, hx, hy, east=(k == 'west'))
-    for k, (cx, cy, cw, ch) in m.complexes.items():
+    m.complexes = pick_sites(m, rmask)
+    for k, (cx, cy, cw, ch) in enumerate(m.complexes):
         rd.rectangle((cx - 6, cy - 6, cx + cw + 5, cy + ch + 5), fill=0)   # the street piece goes
     rmask = to_mask(road_img)
     m.rmask = rmask
@@ -297,8 +307,9 @@ def layout():
     m.occ = Mask(W, H, bytes(rmask.b))          # roads and sidewalks
     m.occ.b = bytearray(1 if v else 0 for v in m.occ.b)
     m.walls, m.props, m.objs, m.shadows, m.decor = [], [], [], [], []
-    m.lamps, m.pickups, m.doors = [], [], []
+    m.lamps, m.pickups, m.doors = [], [], {}
     m.cwalls, m.lobbies = {}, {}
+    m.plugs = []                                 # closed sites' doors, per pair
     m.fence_px = []                              # (x, y, w, h, style) drawn later
     m.cars = []                                  # so a car can be taken away again
     m.gone_objs, m.gone_shadows = set(), set()
@@ -316,9 +327,92 @@ def layout():
     lamps(m, roads)
     paint_roads(m, roads, road_img)
     m.routes, m.walks = routes(m)
-    connect(m)
-    pickups(m)
+    pairs(m)
     return m
+
+
+def pick_sites(m, rmask):
+    """SITES complexes: FIRST_SITES, then, one at a time, the valid
+    candidate farthest from those already picked. A candidate is a
+    street-and-avenue corner outside the made-up areas, with a complex
+    of about two blocks that fits 50 soldiers and covers no real
+    building."""
+    at = {}
+    for hw, n, ln in m.roads:
+        if hw in ('residential', 'unclassified', 'tertiary') and n:
+            for p in ln:
+                at.setdefault((round(p[0], 1), round(p[1], 1)), set()).add(n)
+    blds = []
+    for f in m.feats:
+        if 'building' in f['tags']:
+            for ln in f['lines']:
+                xs, ys = [p[0] for p in ln], [p[1] for p in ln]
+                blds.append((min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)))
+    def valid(r):
+        x, y, w, h = r
+        if not (150 <= w <= 240 and 250 <= h <= 340):
+            return False
+        if x < 120 or y < 90 or x + w > m.W - 120 or y + h > m.H - 90:
+            return False
+        if any(m.zone.getpixel((int(px), int(py))) for px in (x, x + w - 1) for py in (y, y + h - 1)):
+            return False
+        return not any(ov(r, b) for b in blds)
+    cands = []
+    for (px, py), ns in sorted(at.items()):
+        st = [n for n in ns if 'Street' in n]
+        av = [n for n in ns if 'Avenue' in n]
+        if st and av:
+            for east in (True, False):
+                r = complex_at(rmask, px, py, east)
+                if valid(r):
+                    cands.append(r)
+    picked = []
+    for a, b, east in FIRST_SITES:
+        hx, hy = near_point(m, a, b)
+        r = complex_at(rmask, hx, hy, east)
+        assert valid(r), f"first site {a} & {b} isn't valid: {r}"
+        picked.append(r)
+    centre = lambda r: (r[0] + r[2] / 2, r[1] + r[3] / 2)
+    while len(picked) < SITES:
+        best = max((c for c in cands if not any(ov(c, p) for p in picked)),
+                   key=lambda c: min(math.dist(centre(c), centre(p)) for p in picked))
+        picked.append(best)
+    return picked
+
+
+def pairs(m):
+    """every two sites PAIR_DIST apart; with the scores file, only the
+    fair ones. For each pair: close the other sites' doors, check the
+    map, and lay its pickups"""
+    centre = lambda r: (r[0] + r[2] / 2, r[1] + r[3] / 2)
+    n = len(m.complexes)
+    cand = [(a, b) for a in range(n) for b in range(a + 1, n)
+            if PAIR_DIST[0] <= math.dist(centre(m.complexes[a]), centre(m.complexes[b])) <= PAIR_DIST[1]]
+    m.scores = json.load(open(SCORES)) if os.path.exists(SCORES) else None
+    if m.scores is not None:
+        def fair(a, b):
+            s = m.scores.get(site_key(m, a, b))
+            return s and s['games'] >= FAIR_GAMES and abs(s['first_wins'] / s['games'] - 0.5) <= FAIR
+        cand = [p for p in cand if fair(*p)]
+        assert cand, "no fair pairs in " + SCORES
+    m.pairs, m.pair_pickups = [], []
+    for a, b in cand:
+        m.plugs = [d for k in range(n) if k not in (a, b) for d in m.site_doors[k]]
+        connect(m)
+        for k in (a, b):
+            ix, iy, iw, ih = m.lobbies[k]
+            assert in_main(m, ix + iw // 2, iy + ih // 2), f"site {k}'s lobby is cut off (pair {a}-{b})"
+        m.pickups = []
+        pickups(m, a, b)
+        m.pairs.append((a, b))
+        m.pair_pickups.append(m.pickups)
+    m.plugs = []
+
+
+def site_key(m, a, b):
+    """a pair's name in the scores file: its two lobbies' corners, so
+    it survives renumbering"""
+    return "%d,%d-%d,%d" % (m.lobbies[a][:2] + m.lobbies[b][:2])
 
 
 def diag_x_inv(dg, x):
@@ -387,7 +481,7 @@ def runs(grid, pal, ox, oy, out):
 # ---------------------------------------------------------------- pieces
 
 def build_complexes(m):
-    for k, (x, y, w, h) in m.complexes.items():
+    for k, (x, y, w, h) in enumerate(m.complexes):
         t = 10
         # a door in the middle of each side (the sides facing the other
         # gang and the streets); 40 px, like stage 8's
@@ -407,9 +501,11 @@ def build_complexes(m):
             m.gd.line((tx, iy, tx, iy + ih - 1), fill=C['tile'])
         for ty in range(iy + 25, iy + ih, 25):
             m.gd.line((ix, ty, ix + iw - 1, ty), fill=C['tile'])
+        m.site_doors = getattr(m, 'site_doors', {})
+        m.site_doors[k] = []
         for dr_ in g.door_rects((x, y, w, h), t, doors):
             m.gd.rectangle((dr_[0], dr_[1], dr_[0] + dr_[2] - 1, dr_[1] + dr_[3] - 1), fill=C['mat'])
-            m.doors.append((dr_[0] + dr_[2] // 2, dr_[1] + dr_[3] // 2))
+            m.site_doors[k].append(tuple(int(v) for v in dr_))
         # keep the ground just outside every door clear
         for dr_ in g.door_rects((x, y, w, h), t, doors):
             m.occ.rect(dr_[0] - 20, dr_[1] - 20, dr_[2] + 40, dr_[3] + 40)
@@ -1093,7 +1189,7 @@ def paint_roads(m, roads, road_img):
             px[x, y] = C['grain_light'] if rnd.random() < 0.5 else C['grain_dark']
     # the complexes' floors went down before the roads were painted:
     # paint them again on top
-    for k, (x, y, w, h) in m.complexes.items():
+    for k, (x, y, w, h) in enumerate(m.complexes):
         t = 10
         ix, iy, iw, ih = x + t, y + t, w - 2 * t, h - 2 * t
         gd.rectangle((x, y, x + w - 1, y + h - 1), fill=C['grass'])
@@ -1104,15 +1200,17 @@ def paint_roads(m, roads, road_img):
             gd.line((ix, ty, ix + iw - 1, ty), fill=C['tile'])
 
 
-def pickups(m):
+def pickups(m, a, b):
     """80 guns in 40 pairs, between the homes, each pair mirrored through
     the point halfway between the two lobbies: whatever lies near one
     home lies as near the other. (Placed at random, the guns near one home decided games:
     knife carriers arm first, so the gang with more guns nearby armed
     at home while the other walked over with knives. 9.02's second
     batch: the west home won 124 of 144.)"""
-    rnd = random.Random(11)
-    (ax, ay, aw, ah), (bx, by, bw, bh) = m.lobbies['west'], m.lobbies['east']
+    rnd = random.Random(1000 * a + b)            # the pair's own: stable when pairs drop out
+    (ax, ay, aw, ah), (bx, by, bw, bh) = m.lobbies[a], m.lobbies[b]
+    if ax > bx:
+        (ax, ay, aw, ah), (bx, by, bw, bh) = (bx, by, bw, bh), (ax, ay, aw, ah)
     mx, my = (ax + aw / 2 + bx + bw / 2) / 2, (ay + ah / 2 + by + bh / 2) / 2
     # only between the homes: a gun behind a home pulls that gang's
     # knife carriers away from the fight, and when it's the last one
@@ -1202,9 +1300,10 @@ def buckets_of(rects, B=128):
 
 
 def box_hits(m, x0, y0, x1, y1):
-    if not hasattr(m, '_bk') or m._bk_n != len(m.walls) + len(m.props):
-        m._bk = buckets_of(m.walls + m.props)
-        m._bk_n = len(m.walls) + len(m.props)
+    key = (len(m.walls), len(m.props), tuple(getattr(m, 'plugs', ())))
+    if getattr(m, '_bk_key', None) != key:
+        m._bk = buckets_of(m.walls + m.props + list(getattr(m, 'plugs', ())))
+        m._bk_key = key
     B = 128
     for by in range(y0 // B, (y1 - 1) // B + 1):
         for bx in range(x0 // B, (x1 - 1) // B + 1):
@@ -1266,10 +1365,8 @@ def check(m):
     GW, GH = m.grid
     left = cracks(m)
     assert not left, f"{len(left)} cracks left, e.g. {left[:3]}"
-    for k, (ix, iy, iw, ih) in m.lobbies.items():
-        assert in_main(m, ix + iw // 2, iy + ih // 2), f"the {k} lobby is cut off"
-    for p in m.pickups:
-        assert not box_hits(m, p[0], p[1], p[0] + SZ, p[1] + SZ), f"pickup in something: {p}"
+    # (each pair's lobbies are checked in pairs(): a closed site's isn't
+    # meant to be reachable)
     # both lobbies pack 50 soldiers, 20 px apart
     rnd = random.Random(1)
     worst = 0
@@ -1370,17 +1467,15 @@ def write(m):
         offs[name] = (len(blob), len(rows), struct.calcsize(fmt))
         for t in rows:
             blob += struct.pack(fmt, *t)
-    open(os.path.join(MAPS, "southside_bg.bin"), "wb").write(blob)
-    cam_x = (m.homes['west'][0] + m.homes['east'][0]) / 2 - 640
-    cam_y = (m.homes['west'][1] + m.homes['east'][1]) / 2 - 360
-    cam_x = int(min(max(cam_x, 0), m.W - 1280))
-    cam_y = int(min(max(cam_y, 0), m.H - 720))
+    open(os.path.join(MAPS, MAP_FILE + "_bg.bin"), "wb").write(blob)
     out = [";; ---- MAP (generated by tools/gen_southside.py; don't edit by hand) ----",
            ";; the south side: real streets (OpenStreetMap, (c) OpenStreetMap",
            ";; contributors, ODbL), compressed about five times", "",
            f"MAP_W equ {m.W}", f"MAP_H equ {m.H}",
-           f"MAP_CAM_X equ {cam_x}             ; where the camera starts: between the homes",
-           f"MAP_CAM_Y equ {cam_y}", "", "section .data"]
+           f"NUM_SITES equ {len(m.complexes)}         ; complexes a gang can live in",
+           f"NUM_PAIRS equ {len(m.pairs)}         ; pairs of them that play fair" +
+           ("" if m.scores is not None else " (all candidates: no scores yet)"),
+           f"PICKUPS_PER_PAIR equ {len(m.pair_pickups[0])}", "", "section .data"]
     out += ['    map_name db "South Side"', "    map_name_len equ $ - map_name"]
     def block(name, rows, comment):
         out.append(f"    ; {comment}")
@@ -1391,22 +1486,34 @@ def write(m):
     walls = m.walls
     block("map_walls", walls, "walls: x, y, w, h (buildings, houses, the complexes' walls)")
     block("map_props", m.props, "low cover: x, y, w, h (cars, fences, planes)")
-    for k in ('west', 'east'):
-        block(f"cwalls_{k}", m.cwalls[k], f"the {k} complex's walls, drawn in its gang's colour")
-    block("lobbies", [m.lobbies['west'], m.lobbies['east']],
-          "lobby interiors: x, y, w, h (spawn and respawn areas), west then east")
-    block("map_pickups", m.pickups, "weapon pickups: x, y, type")
+    n = len(m.complexes)
+    block("site_rects", m.complexes, "the sites (10.03): each complex's outside, x, y, w, h")
+    block("site_lobbies", [m.lobbies[k] for k in range(n)], "... its lobby: x, y, w, h (spawn and respawn area)")
+    walls, idx = [], []
+    for k in range(n):
+        idx.append((len(walls), len(m.cwalls[k])))
+        walls += m.cwalls[k]
+    block("site_walls", walls, "... its walls, drawn in the colour of the gang living there (or grey, closed)")
+    block("site_wall_idx", idx, "... which of site_walls are its: first, count")
+    doors, idx = [], []
+    for k in range(n):
+        idx.append((len(doors), len(m.site_doors[k])))
+        doors += m.site_doors[k]
+    block("site_doors", doors, "... its doorways: x, y, w, h (walled up when it's closed; lit when it's home)")
+    block("site_door_idx", idx, "... which of site_doors are its: first, count")
+    block("pair_sites", m.pairs, "the pairs a game can pick: site, site")
+    block("pair_pickups", [p for pp in m.pair_pickups for p in pp],
+          "each pair's weapon pickups, PICKUPS_PER_PAIR a pair: x, y, type")
     block("street_lamps", m.lamps, "streetlights: x, y (their 8x8 heads)")
-    block("door_lights", m.doors, "complex doorways: centre x, y, where lobby light spills out")
     block("cop_routes", m.routes, "police routes: x, y, w, h, dx, dy (a lane, from off the map)")
     block("dog_walks", m.walks, "dog walks: start x, y, dx (along a sidewalk, from off the map)")
-    out.append("    ; the background, in maps/southside_bg.bin: ground (x, y, w, h, colour),")
+    out.append(f"    ; the background, in maps/{MAP_FILE}_bg.bin: ground (x, y, w, h, colour),")
     out.append("    ; shadows (x, y, w, h), objects (x, y, w, h, colour)")
     for name, (off, n, size) in offs.items():
-        out.append(f"    {name}: incbin \"maps/southside_bg.bin\", {off}, {n * size}")
+        out.append(f"    {name}: incbin \"maps/{MAP_FILE}_bg.bin\", {off}, {n * size}")
         out.append(f"    {name}_count equ {n}")
     out.append(";; ---- END MAP ----")
-    open(os.path.join(MAPS, "southside.inc"), "w").write("\n".join(out) + "\n")
+    open(os.path.join(MAPS, MAP_FILE + ".inc"), "w").write("\n".join(out) + "\n")
     return len(ground), len(m.shadows), len(objs)
 
 
@@ -1425,10 +1532,13 @@ def preview(m, path, scale):
     for x, y, w, h, c in m.objs:
         c = c if isinstance(c, tuple) else unrgb(c)
         dr.rectangle((x, y, x + w - 1, y + h - 1), fill=c)
-    for k, col in (('west', (60, 120, 220)), ('east', (220, 60, 60))):
+    a, b = m.pairs[0]
+    for k in range(len(m.complexes)):
+        col = (60, 120, 220) if k == a else (220, 60, 60) if k == b else (130, 130, 130)
         for x, y, w, h in m.cwalls[k]:
             dr.rectangle((x, y, x + w - 1, y + h - 1), fill=col)
-    for x, y, t in m.pickups:
+        dr.text((m.complexes[k][0] + 10, m.complexes[k][1] + 10), str(k), fill=(0, 0, 0))
+    for x, y, t in m.pair_pickups[0]:
         dr.rectangle((x, y, x + 9, y + 9), fill=(230, 210, 40) if t == 1 else (170, 60, 200))
     if scale != 1:
         im = im.resize((m.W // scale, m.H // scale), Image.BOX)
@@ -1438,9 +1548,10 @@ def preview(m, path, scale):
 if __name__ == "__main__":
     m = layout()
     GW, GH, n, worst = check(m)
-    print(f"{m.W}x{m.H} ({m.k:.2f} px/m), grid {GW}x{GH}: {n} walkable cells connected, "
+    print(f"{m.W}x{m.H} ({m.k:.2f} px/m), grid {GW}x{GH}: {n} walkable cells connected (last pair), "
           f"{sum(p[2] for p in m.pockets)} in {len(m.pockets)} pockets; worst lobby spawn {worst} tries; "
-          f"{len(m.walls)} walls, {len(m.props)} props, {len(m.pickups)} pickups, {len(m.lamps)} lamps, "
+          f"{len(m.walls)} walls, {len(m.props)} props, {len(m.complexes)} sites, {len(m.pairs)} pairs "
+          f"{m.pairs}, {len(m.lamps)} lamps, "
           f"{len(m.routes)} police routes, {len(m.walks)} dog walks", file=sys.stderr)
     for p in m.pockets[:20]:
         print("  pocket at", p, file=sys.stderr)

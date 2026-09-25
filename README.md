@@ -166,6 +166,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 |---|---|
 | `01_modules` | The source split into 21 modules, one per concern; the same machine code as 9.03, byte for byte |
 | `02_factions` | Two teams become factions, with a table of who fights whom and a flow field per faction; the same game, byte for byte |
+| `03_fair_homes` | Six possible home sites; each game picks one of the pairs that batches showed are fair (9.02's 62% home lean is gone) |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.

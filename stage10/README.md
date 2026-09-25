@@ -15,11 +15,13 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/02_factions           # the latest: wheel zooms, W A S D pans
+./build/03_fair_homes         # the latest: wheel zooms, W A S D pans
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
-python3 tools/gen_southside.py                      # rebuild the map in maps/
-python3 tools/gen_sprites.py --write 02_factions/sprites.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/02_factions
+python3 tools/gen_southside.py                      # rebuild maps/southside2.* (15 s)
+python3 tools/score_pairs.py build/03_fair_homes    # re-score the home pairs (~40 min)
+PAIR=0 ./build/03_fair_homes                        # a given pair of homes
+python3 tools/gen_sprites.py --write 03_fair_homes/sprites.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/03_fair_homes
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -129,3 +131,82 @@ ones all go out at once, as 9.03 reported the Bloods.
 
 About 4% slower (1.71 s a game): six empty fields get seeded each
 tick.
+
+## `03_fair_homes/` — fair homes, chosen at random
+
+`02_factions/`, with the gangs' homes picked at random each game from
+pairs of sites that batches showed are fair. 9.02's two fixed homes
+gave the west one about 62% of the wins.
+
+**Six sites.** `tools/gen_southside.py` now places `SITES` = 6
+apartment complexes. The first two are 9.02's homes (SW 20th &
+Monroe, and SW 9th & Jefferson). The rest are chosen one at a time: of
+every street-and-avenue corner outside the park, airport and wrecker
+lots whose two-block complex fits 50 soldiers and covers no real
+building, the one farthest from those already picked. They came out
+in the south-middle neighbourhood (2), by the loop road in the
+north-east (3), the middle west (4) and the middle east (5). Houses
+keep clear of all six.
+
+**Candidate pairs.** Any two sites 1,500–3,600 px apart: nine of
+them. For each, the generator closes the other four (their doorways
+count as walls), checks the map is connected and both lobbies are in
+the main part, and lays 80 pickups mirrored between the two lobbies.
+A pair's pickups are seeded by its two sites, so they're the same
+whichever other pairs are in the map.
+
+**Scoring.** `tools/score_pairs.py` plays each pair headless
+(`PAIR=n`, through `batch.sh`, 4 games at a time) and counts how often
+the gang in the pair's first site wins. The side swap is still random,
+so the gangs stay even; what's measured is the sites. 96 games each,
+then 480 for any pair within 15% of even. Results, in
+`maps/pair_scores.json`:
+
+| Pair | Sites | First site won | Kept |
+|---|---|---|---|
+| 0–1 | 20th & Monroe, 9th & Jefferson (9.02's) | 48.8% of 480 | yes |
+| 1–3 | 9th & Jefferson, the north-east | 53.9% of 960 | yes |
+| 4–5 | middle west, middle east | 53.3% of 480 | yes |
+| 2–3 | | 58.7% of 479 | no |
+| 2–5 | | 42.3% of 480 | no |
+| 0–2, 0–5, 1–2, 3–4 | | 71%, 85%, 82%, 29% of 96 | no |
+
+The generator keeps the pairs within 4.5% of even over at least 480
+games (about 2 standard deviations), and writes only those into the
+map. Pair 0–1 is even now: with more sites and each pair's own
+mirrored pickups, 9.02's 62% lean is gone.
+
+**A lean that came back.** The final batches (144 games, random pairs)
+had pair 1–3 at 30 of 42 for site 1, where scoring had found 50.4%.
+A fresh sample of 480, decided on before looking further, gave 57.3%.
+Its map was checked to be identical (the same pickups, the same
+closed sites), so it's sampling: pooled, 517 of 960, 53.9%, a small
+lean that the first 480 happened to hide. It stays in (within 4.5%),
+and the scores file records the pooled numbers. 480 games only
+resolves a pair to about ±4.5%; a stricter cut would need 2,400 each.
+The gangs are even regardless: the coin flip gives each gang the
+better site half the time.
+
+**In the game.**
+- `choose_sides` picks a pair (`PAIR=n` names one), then flips a coin
+  for which gang gets which site, as before; `fwd_sign` comes from the
+  two lobbies' positions.
+- Spawns, respawns, pickups (`pair_pickups`), the lobby and door
+  lights, and the starting camera (`camera_start`, halfway between the
+  homes) all follow the pair.
+- The four closed sites: `build_blockmap` marks their doorways as walls,
+  so the pathfinding grid never goes in; `render_background` draws
+  their walls and doorways grey, and a flat roof over the lobby.
+- The win line says `; homes a-b; crips home s`: how the batches score
+  a pair.
+
+**Versioned map files.** The map's format changed, and `maps/` is
+shared by every step, so the new map is `maps/southside2.inc` and
+`maps/southside2_bg.bin`. 10.01 and 10.02 keep including 9.02's
+`southside.inc`, unchanged, which `stage9/tools/gen_southside.py` can
+still regenerate. From now on, a format change gets a new name.
+
+**Checks.** 144 games with random pairs: no stalemates or crashes,
+Crips 67 – Bloods 77, the pairs' first sites 80 of 144 (z 1.3). One
+game of the dropped pair 2–3 didn't finish during scoring (1 in about
+2,900); the kept pairs had none in 2,064 games.

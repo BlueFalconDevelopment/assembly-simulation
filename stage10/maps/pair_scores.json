@@ -1,0 +1,84 @@
+{
+ "614,413-2801,262": {
+  "sites": [
+   0,
+   1
+  ],
+  "games": 480,
+  "first_wins": 234,
+  "unfinished": 0
+ },
+ "614,413-2146,2073": {
+  "sites": [
+   0,
+   2
+  ],
+  "games": 96,
+  "first_wins": 68,
+  "unfinished": 0
+ },
+ "614,413-3485,806": {
+  "sites": [
+   0,
+   5
+  ],
+  "games": 96,
+  "first_wins": 82,
+  "unfinished": 0
+ },
+ "2801,262-2146,2073": {
+  "sites": [
+   1,
+   2
+  ],
+  "games": 96,
+  "first_wins": 79,
+  "unfinished": 0
+ },
+ "2801,262-4409,259": {
+  "sites": [
+   1,
+   3
+  ],
+  "games": 960,
+  "first_wins": 517,
+  "unfinished": 0,
+  "note": "pooled: the scoring run (242/480) and a fresh run with the 3-pair map (275/480)"
+ },
+ "2146,2073-4409,259": {
+  "sites": [
+   2,
+   3
+  ],
+  "games": 479,
+  "first_wins": 281,
+  "unfinished": 1
+ },
+ "2146,2073-3485,806": {
+  "sites": [
+   2,
+   5
+  ],
+  "games": 480,
+  "first_wins": 203,
+  "unfinished": 0
+ },
+ "4409,259-1494,932": {
+  "sites": [
+   3,
+   4
+  ],
+  "games": 96,
+  "first_wins": 28,
+  "unfinished": 0
+ },
+ "1494,932-3485,806": {
+  "sites": [
+   4,
+   5
+  ],
+  "games": 480,
+  "first_wins": 256,
+  "unfinished": 0
+ }
+}
