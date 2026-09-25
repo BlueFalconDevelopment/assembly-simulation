@@ -84,6 +84,7 @@ questions meant to be answered by experimenting.
 | [`stage6c`](stage6c) | Scale to 50v50, plus the headless `batch.sh` harness |
 | [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire, arenas, pathfinding, respawns, the neighborhood, random encounters, the Big Homie |
 | [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog, then props, shadows, ground effects, day and night, and a zoomable camera |
+| [`stage9`](stage9) | Scale: a map sixteen screens big, drawn only where the camera looks (in progress) |
 
 In `stage7`, each numbered file is the previous one plus one change:
 
@@ -116,6 +117,12 @@ In `stage8`:
 | `04_ground` | Blood splats, shell casings and a death animation that stay on the street |
 | `05_night` | Day and night: time passes, streetlights, lit lobbies, headlights and muzzle flashes light the dark |
 | `06_camera` | Mouse-wheel zoom toward the cursor, and W A S D to move the camera |
+
+In `stage9`:
+
+| File | Change |
+|---|---|
+| `01_world` | A 5120×2880 map (a stand-in: stage 8's neighborhood tiled 4×4), with the map data in its own files; each frame draws only the camera's view, which can now zoom out to a quarter of the map |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.
