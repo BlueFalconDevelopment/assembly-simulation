@@ -10,7 +10,7 @@ five times so the whole area fits.
 
 ```bash
 make
-./build/02_southside         # the latest: wheel zooms (half size to 4x), W A S D pans
+./build/03_bfs               # the latest: wheel zooms (half size to 4x), W A S D pans
 STAGGER=0 ./batch.sh 48      # headless, 4 games at a time
 python3 tools/gen_southside.py  # rebuild the south side map in maps/ (15 s)
 python3 tools/gen_standin.py    # rebuild 01's stand-in map
@@ -241,3 +241,70 @@ little west of it, around x 1,500–1,750, near the west home. Nothing
 there is jammed any more: it looks like the lie of the land. It's
 the first map that isn't symmetric, and the homes are the obvious
 thing to move.
+
+## `03_bfs.asm` — five times faster headless
+
+`02_southside.asm` with the same games, byte for byte: for 12 seeds
+headless (including the old stalemate seed) and one windowed, the end
+state (`soldiers`, `pickups`, `rng_state`, `ticks`) is identical to
+02's. A headless game takes 1.6 s instead of 8.3 s, and a 48-game
+batch 22 s instead of about 2 minutes.
+
+**Profiling without perf.** `perf` needs `perf_event_paranoid`
+lowered (it's 4 here), and gdb can't attach to a running game
+(`ptrace_scope` 1). But gdb can stop a game it started itself.
+`tools/profile.py` runs the game under gdb, has a shell loop send it
+SIGINT every 20 ms, and counts which function each stop lands in:
+
+```bash
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/03_bfs
+```
+
+Two things that got in the way: `handle SIGINT stop noprint` means *no
+stop* in gdb (`noprint` implies `nostop`), and a Python thread can't
+do the ticking, because gdb's Python holds its lock while the game
+runs. On 02 it said: 92% in `bfs_run`. Three flow fields a tick, each
+searched over the whole map, 120,000 walkable cells.
+
+**No divide.** For every cell it took off the queue, `bfs_run`
+divided the index by `GRID_W` for the column and row (to keep the
+neighbours inside the grid), then read `walkable[]` once per
+neighbour. `walkable[]` never changes during a game, so that's
+worked out once now: `build_nbrs` gives each cell a byte in
+`bfs_nbrs` with a bit for each neighbour (right, left, down, up)
+that's inside the grid and walkable. The search reads one byte per
+cell. That alone was only 17%: at about 4 ns a cell, it's memory it
+waits on, not arithmetic.
+
+**Search only as far as needed.** The real cost was searching the
+whole map when nobody needs most of it. The only reader of a field is
+`flow_waypoint`, called only when a wall is in the way of a soldier's
+direct route, and it only uses the neighbours of the soldier's cell
+that are *strictly closer* than the cell itself. A breadth-first
+search gives every cell at distance *d* its distance before any cell
+at *d* + 1. So once the soldier's own cell has its distance, every
+cell `flow_waypoint` could use has its own.
+
+So each field's search can stop and carry on. `build_fields` only
+seeds the three searches (each field has a `BfsState`: its own queue,
+where it got to, and how far it's queued), and `flow_waypoint` calls
+`bfs_ensure` first, which carries that field's search on until the
+soldier's cell has its distance. A soldier standing in a cell that
+isn't walkable never gets one (the search only enters walkable cells),
+and `flow_waypoint` then uses every walkable neighbour that has a
+distance, so for that soldier it carries on until all of those have
+theirs. Carrying on reaches the cells in the same order, with the same
+distances, as one search run to the end, so whatever is read is the
+same.
+
+A search that stops early has to be done this way, on demand, rather
+than by working out beforehand who'll need what: the Big Homie is
+placed by `update_bosses`, after `build_fields`, and then walks in the
+same tick. Asking when he walks gets it right without knowing.
+
+Since most searches now stop early, `bfs_begin` clears only the cells
+the last search reached (all of them are in its queue) instead of all
+three fields, 1 MB a tick. The first time, it clears the whole field.
+
+The search is still the biggest cost (about 60%): early in a game the
+gangs are 244 cells apart, so their searches go a long way.

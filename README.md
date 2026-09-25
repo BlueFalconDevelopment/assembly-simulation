@@ -124,6 +124,7 @@ In `stage9`:
 |---|---|
 | `01_world` | A 5120×2880 map (a stand-in: stage 8's neighborhood tiled 4×4), with the map data in its own files; each frame draws only the camera's view, which can now zoom out to a quarter of the map |
 | `02_southside` | A real city's south side from OpenStreetMap, compressed about 5× to 5120×2608: real streets, generated houses, a park, an airport, wrecker lots, a fenced expressway; the generator plugs every gap a soldier could get stuck or jammed in |
+| `03_bfs` | Five times faster headless, the same games byte for byte: the flow-field searches skip a divide per cell and only run as far as a soldier asking for directions needs |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.
