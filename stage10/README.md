@@ -15,13 +15,15 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/03_fair_homes         # the latest: wheel zooms, W A S D pans
+./build/04_endless            # the latest: the endless war; wheel zooms, W A S D pans
+MODE=watch ./build/04_endless # last gang standing (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild maps/southside2.* (15 s)
-python3 tools/score_pairs.py build/03_fair_homes    # re-score the home pairs (~40 min)
-PAIR=0 ./build/03_fair_homes                        # a given pair of homes
-python3 tools/gen_sprites.py --write 03_fair_homes/sprites.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/03_fair_homes
+python3 tools/score_pairs.py build/04_endless       # re-score the home pairs (~40 min)
+PAIR=0 ./build/04_endless                           # a given pair of homes
+MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
+python3 tools/gen_sprites.py --write 04_endless/sprites.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/04_endless
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -210,3 +212,49 @@ still regenerate. From now on, a format change gets a new name.
 Crips 67 – Bloods 77, the pairs' first sites 80 of 144 (z 1.3). One
 game of the dropped pair 2–3 didn't finish during scoring (1 in about
 2,900); the kept pairs had none in 2,064 games.
+
+## `04_endless/` — the endless war
+
+`03_fair_homes/` with two modes, set with `MODE=` (`read_mode`):
+
+- **watch**: last gang standing, exactly as before. The default when
+  `HEADLESS`, so batches, replays and the fairness checks carry on
+  unchanged. Byte for byte: the same seed ends the same as 10.03, for
+  12 seeds headless and one windowed (`MODE=watch`).
+- **game**: the endless war the game will be played in. The default
+  in a window. Unlimited lives and respawns and no score limit,
+  whatever `LIVES`, `RESPAWNS` and `SCORE_LIMIT` say; `check_win` never
+  ends it. Closing the window prints how the war went ("Endless war
+  on South Side! ..."), and `HEADLESS=1 MODE=game` plays one to
+  `MAX_TICKS` (30,000, about 8 minutes of game time) and prints the
+  same line, so wars can be batched (`batch.sh` counts them as
+  "stuck": there's no winner).
+
+**The Big Homie comes back.** He came out once per gang per game. In
+an endless war, once a gang's Big Homie is dead it can bring him out
+again, when it has fallen `BOSS_KILL_GAP` kills further behind than it
+was when he died (`boss_base`, 0 in watch mode). The win line now
+counts his outings (`boss_count`), which in watch mode is the same 0
+or 1 as before.
+
+**The guns piled up.** The first 48 wars were balanced (959 kills a
+war to 962) but some were quiet: 1,306 kills in one, 2,567 in another.
+Sampling the quietest every 1,000 ticks showed the kill rate falling
+from about 50 to about 15 after 3,000 ticks, and armed soldiers from
+15–20 a side to 4–6. At tick 10,000, 69 of the 80 guns were on the
+ground: all in a heap in one street, between the two crowds, where
+the dead had dropped them and nobody lived long enough to pick one
+up. The respawned knife carriers queued behind the front for them.
+Watch-mode games end at about 4,700 ticks, so it had never shown.
+
+So in game mode a gun that has lain on the ground `PICKUP_STALE`
+ticks (900, 15 s) is "picked up by someone else": `refresh_pickups`
+moves it to one of the pair's pickup spots, at random. It's the same
+gun, so every weapon is still in exactly one place. (`pickup_age`
+counts; `drop_weapon` resets it.) The same war afterwards: 70–100
+kills per 1,000 ticks from start to end, 10–30 guns a side, and real
+swings of momentum.
+
+**48 wars** (random pairs): 1,877–2,836 kills each, Crips 1,107 and
+Bloods 1,086 a war on average, the Crips ahead in 30 of 48 (z 1.7),
+no crashes. The Big Homie came out 0.8 and 1.4 times a war, up to 4.
