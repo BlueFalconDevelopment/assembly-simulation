@@ -1,8 +1,10 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-24) — read this first when picking the project back up
+## Status (as of 2026-09-24, end of day) — read this first when picking the project back up
 
-**Where things stand:** the roadmap (Stages 0–6c) is done, and Stage 7 has sixteen post-roadmap steps. **Stage 8 (graphics) has started. Latest build: `stage8/06_camera.asm`** (~18,900 lines, about 11,700 of them generated background data), map from `stage8/tools/gen_neighborhood.py`, sprites from `stage8/tools/gen_sprites.py`. Stage 8's steps are listed in `stage8/README.md`. Start any new change from a copy of it. Working tree clean, `main` in sync with GitHub.
+**Where things stand:** the roadmap (Stages 0–6c) is done. Stage 7 (sixteen steps) turned the sim into a gang war in a city neighborhood, and **Stage 8 (graphics) is complete: six steps, all drawing only.** **Latest build: `stage8/06_camera.asm`** (18,882 lines: about 12,200 are generated map and sprite data, and about 6,700 are hand-written assembly, comments and the font). Start any new change from a copy of it. **All code is committed and pushed through 8.06** (`11e7774`). If `git status` shows this plan modified, it's this end-of-day update, which was left for the user to commit.
+
+What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 neighborhood, 3 lives each, last gang standing. They spawn and respawn inside their apartment complexes (randomly swapped each game) and route around buildings with flow-field pathfinding. Police cars and a loose pitbull shake things up, and the losing gang gets a Big Homie miniboss. It's all hand-made pixel art with shadows, blood, day and night, and a camera you can zoom (mouse wheel) and move (W A S D).
 
 | Step | File | Result |
 |---|---|---|
@@ -30,25 +32,41 @@
 | 8.06 | `stage8/06_camera` | mouse-wheel zoom (1×–4×, toward the cursor) and W A S D panning: the camera is a source rectangle for `SDL_RenderCopy`; the frame is drawn exactly as before |
 
 **Where everything lives:**
-- **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (`docs/demo.gif`) and a stage table. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. Read `stage7/README.md` before changing `update_soldiers`.
-- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app). Published posts are `src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`, covering 0–6b, 6c–7.02, 7.03–7.06 and 7.07–7.08. The drafts are in `newPOSTS/` (committed). A published post is adapted from its draft into the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top with a video the user picks. Check it with `npm run build`.
+- **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (still the stage 7.06 look), a stage table and per-stage file tables. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. `stage7/README.md` covers game logic (read it before touching `update_soldiers`); `stage8/README.md` covers graphics.
+- **Generators** (Python, in `stage8/tools/`; they write data blocks between marker comments in an `.asm`):
+  - `gen_neighborhood.py`: the map (walls, props, pickups, lobbies, doors, streetlights) plus the three background layers. It checks connectivity, lobby packing, overlaps and decoration placement. `cd stage8/tools && python3 gen_neighborhood.py --write ../NN_name.asm` (`--preview x.png` renders it).
+  - `gen_sprites.py`: all pixel art as text grids (soldiers, police car, parked-car art, dog, pickups, props, fallen soldier, blood). `python3 tools/gen_sprites.py --write NN_name.asm` (`--preview`, `--preview-objects`).
+  - It imports `gen_sprites`, so `__pycache__/` is gitignored.
+- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app).
+  - **Published:** Parts 1–4 (`src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`: 0–6b, 6c–7.02, 7.03–7.06, 7.07–7.08).
+  - **Two drafts waiting, both uncommitted, in `newPOSTS/`:** Part 5 (7.09–7.11: pathfinding, traffic, scoreboard; video embed line at the top) and **Part 6 (7.12–8.06: respawns, the neighborhood, police and pitbull, the Big Homie, all of stage 8; video: "Go" by The Chemical Brothers, embed line at the top)**.
+  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so. It also has an unpushed commit from earlier, `ff30e65` ("Skip Netlify builds for README/drafts-only pushes", `netlify.toml`), left as it is.
+  - Publishing means turning a draft into `.mdx` in the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top (the user picks the video). Check it with `npm run build`.
 
 **How we work (keep doing this):**
-- **One change = one new numbered file** in `stage7/` (copy the latest, add a header comment block, update `title` and the "Build and run" footer). Document it as a new section in `stage7/README.md`, and update the table above.
-- **Gameplay changes:** at least 3 batches of `STAGGER=0 ./batch.sh 48 build/NN_name > out.txt 2>&1` (per-game lines go to stderr, so capture `2>&1`, and use `grep '^team 0:'` for the tally). Anything consistently one-sided means looking for a mirror asymmetry before trusting it. **Run batches one at a time.** `batch.sh` runs at most `JOBS` games at once (default 4, under `nice`), so a 48-game batch takes a few minutes. On 2026-09-24, 96 games at once nearly froze the desktop.
-- **Cosmetic changes:** prove they're cosmetic with the fixed-seed gdb check (below): both builds must end with byte-identical `soldiers`, `pickups` and `rng_state`.
-- **The user likes to watch:** after a change, run 3 games in the background (`for i in 1 2 3; do ./build/NN; done`, needs `DISPLAY`). The user closes each window to start the next.
+- **One change = one new numbered file** in the current stage folder (`stage8/` now; `stage9/` when scale starts, with Makefile, `batch.sh` and `tools/` copied over). Copy the latest file, add a header comment block, update `title_prefix` and the "Build and run" footer. Document it as a new section in that stage's README, and add a row to the table above and to the top-level README.
+- **The user likes to watch:** after a change, run 3 games in the background, one after another (`for i in 1 2 3; do ./build/NN; done`). The user closes each window to start the next. If a set is still open, wait for it (`while pgrep -x NN >/dev/null; do sleep 1; done`) so windows don't pile up. Report each game's winner, score, and anything notable (arrests, the Big Homie).
 - **Commit and push only when asked.** Commit messages end with the Co-Authored-By line.
+- **Gameplay changes:** batch at least 480 games per setting, 4 at a time and one batch after another (`STAGGER=0 ./batch.sh 48 build/NN 120` repeated; about 0.85 s per neighborhood game). Per-game lines go to stderr, so append with `2>>file` and parse the win line (fields: ticks, score, big homies, big homie at, arrests, police kills, dog kills, crips home). Check the gang split (the side swap should make it even) and, separately, the home split. **A lean around 2 standard deviations gets a fresh 2,400-game sample, decided in advance, before anyone argues about it.** Every lean chased that way so far was chance.
+- **Drawing-only changes:** prove them with the fixed-seed check below (byte-identical `soldiers`, `pickups`, `rng_state`, `ticks` against the previous build, windowed on the dummy driver), then look at gdb frame dumps.
+- **Never more than about 4 game processes at once** (the desktop nearly froze at 96; see memory).
+
+**Environment variables (all builds that have them):**
+`HEADLESS=1` (no window, flat out), `SEED=n` (replay; a stalemate line prints its seed), `LIVES=n` (per soldier; 0 = unlimited; neighborhood default 3), `RESPAWNS=n` (team pool), `SCORE_LIMIT=n` (0 = last gang standing, the neighborhood default), `BOSS_AT=n` (Big Homie trigger %, default 60; 0 = off), `TIME=h` (8.05+: starting hour), `ARENA=n` (stage 7's arena builds 07–12 only). `batch.sh` takes `JOBS=n` (default 4) and `STAGGER=0`.
 
 **Reusable recipes:**
-- **Fixed seed + end state (gdb):** `break spawn_obstacles`, `run`, `set var *(unsigned long*)&rng_state = 0x0123456789abcdef`, `watch *(int*)&game_over`, `continue`, then `dump binary memory f.bin (char*)&soldiers (char*)&soldiers+3600`. Run it headless with `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software`.
-- **Frames/GIF:** after the seed, `break SDL_LockTexture`, `ignore 2 450`, then loop `eval "dump binary memory f%03d.raw (char*)&back_buffer (char*)&back_buffer+1920000", $n` / `continue`. Raw frames are RGBA 800×600. Build the GIF in PIL with an exact palette from the frames' unique colours (only ~9, so it's lossless): 360 frames → every 2nd at 30ms ≈ 0.46 MB.
+- **Fixed seed + end state (gdb), for byte-identical checks:** `SEED=4242 SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software gdb -batch -ex 'break print_result' -ex run -ex "dump binary memory a.bin (char*)&soldiers (char*)&soldiers+3672" -ex "append binary memory a.bin (char*)&pickups (char*)&pickups+288" -ex "append binary memory a.bin (char*)&rng_state (char*)&rng_state+8" -ex "append binary memory a.bin (char*)&ticks (char*)&ticks+4" -ex kill ./build/NN`, the same for the other build, then `cmp`. (102 soldiers × 36 bytes; 18 pickup slots × 16.)
+- **A frame:** `break SDL_LockTexture`, `run`, `ignore 1 900`, `continue`, then dump `back_buffer` (1280×744×4 = 3,809,280 bytes; RGBA) and open it with PIL `Image.frombytes('RGBA',(1280,744),...)`. For an event, use a conditional breakpoint: `break draw_effects if *(int*)&cop_active != 0`, then `delete`, `break SDL_LockTexture`, `continue`, dump.
+- **Timing a windowed game:** it doesn't exit after the win (it waits for the window to close), so time from launch to the win line, as `batch.sh` does.
 
-### Next steps (the user picks; agreed order: graphics, then scale)
+### Next steps (the user picks)
 
-1. **Stage 9, scale:** more soldiers (a performance project; `first_in_line` first), more gangs (3–4 complexes), a bigger single screen and/or a scrolling city with a camera.
-2. Tuning as wanted: the Big Homie (15% comebacks), the police (`FEAR_RADIUS`, `COP_CHANCE`), the dog.
-3. **Publish Part 5** (7.09–7.11). The draft is written: `newPOSTS/Learning x86-64 Assembly Part 5 - Pathfinding, Traffic, and a Scoreboard.md` (uncommitted), with the video embed line at the top. Not published yet because the Netlify credits ran out. 7.12–7.16 and stage 8 would make later parts.
+1. **Stage 9, scale.** The user wants all of these eventually:
+   - **More soldiers:** a performance project, measured headless (0.85 s per game now). Suspected hotspots: `first_in_line` (every box × every point on every line of fire) and the hold-fire check that calls it, then `find_nearest_*` (every soldier × every soldier). Profile first (`perf record`).
+   - **More gangs** (3–4 complexes, everyone against everyone). This touches every two-team assumption: `score[2]`, `home[2]`, `fwd_sign[2]`, `field_to0/1`, `tickets[2]`, `boss_state[2]`, the `BOSS0/1` slots, `check_win`, the side swap, the HUD, the win line and `batch.sh`'s tally.
+   - **A bigger or scrolling city.** 8.06's camera is the start: a world bigger than the window means drawing only the visible part (the back buffer is 1280×744 today) and a bigger blockmap and grid.
+2. Tuning as wanted: the Big Homie (11% comebacks at `BOSS_AT=60`), the police (`FEAR_RADIUS`, `COP_CHANCE`), the dog, the amount of blood.
+3. **Publish Parts 5 and 6** when Netlify credits are back (see Blog above). The demo GIF in the README could be re-recorded with the stage 8 look.
 
 ### Traps to avoid (hard-won)
 
@@ -61,6 +79,16 @@
 - **`cdq`/`idiv` (and `div`) overwrite `edx`.** 7.04's `spawn_effect` read a soldier index from `edx` after a division. Reload anything that was in `rdx`, or keep it in memory.
 - **Latent bugs wait for new callers.** `fill_rect` didn't clip negative x/y for five stages, until impact sparks landed off-screen (fixed in 7.04 onward). When new code calls an old helper with new kinds of inputs, check the helper's edge cases.
 - **`gcc -no-pie` is required** when linking anything that calls SDL2 (or any extern C function) from hand-written asm using plain `call func` — without it you get `relocation ... can not be used when making a PIE object`. Already baked into every stage's Makefile from stage2 onward; just don't drop it if writing a new one from scratch.
+- **Caller-saved registers don't survive a libc call.** `read_rules` put a default in `ecx`, then called `getenv`, which left 69 there: "unlimited" lives became 68 respawns per soldier (12–13). Set values *after* the call, or keep them in callee-saved registers or memory.
+- **Drawing may never touch the game's RNG.** One extra `rng_next` shifts every later random number and changes the whole game. Anything cosmetic that needs randomness (splat shapes, casing scatter, the starting time of day) uses `deco_hash` of positions, frame counts or the seed.
+- **The bg_buffer trick:** anything stamped into `bg_buffer` persists for the rest of the game at no cost per frame (blood, casings), because the whole buffer is copied to the screen each frame.
+- **Fleeing "straight away" isn't always away.** Soldiers ahead of the police car in its lane ran down the road in front of it. Fleeing across its path halved arrests (16). When a rule looks right but the numbers don't move, trace a case.
+- **gdb dumps must match the code's moment.** Comparing BFS fields to Python "failed" because they were dumped mid-tick, after soldiers had moved. Dump right after the function that builds the thing (`finish`).
+- **A test can break the symmetry it's testing.** The side-swap test for Crossroads flipped positions but not the team-based "forward" tie-break, so it proved nothing. Make sure the control really is a mirror.
+- **`pkill -f pattern` matches the shell running it** if the pattern is in its own command line, and kills that too (exit 144). Use `pgrep -x name` / `kill PID`.
+- **`tee /dev/stderr` truncates a redirected stderr file** on every batch, because it reopens it. `batch.sh` writes each line to stderr directly now.
+- **High-byte registers (`ah`, `dh`...) can't be used in an instruction with a REX prefix** (any of `r8`–`r15`, or `sil`/`dil`): `movzx r13d, dh` is an assembler error. Shift and mask instead.
+- **An even grid cell width can't be mirror-symmetric over an odd number of positions** (corner x 0..784 is 785 positions). That's why the pathfinding grid uses 9px cells (09).
 
 ## Why
 
