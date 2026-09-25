@@ -15,15 +15,16 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/05_on_foot            # the latest: you, on foot in the endless war
-MODE=watch ./build/05_on_foot # last gang standing, no player (the default headless)
+./build/06_bicycle            # the latest: you, on a bike in the endless war
+MODE=watch ./build/06_bicycle # last gang standing, no player (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild maps/southside2.* (15 s)
-python3 tools/score_pairs.py build/05_on_foot       # re-score the home pairs (~40 min)
-PAIR=0 ./build/05_on_foot                           # a given pair of homes
+python3 tools/score_pairs.py build/06_bicycle       # re-score the home pairs (~40 min)
+PAIR=0 ./build/06_bicycle                           # a given pair of homes
 MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
-python3 tools/gen_sprites.py --write 05_on_foot/sprites.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/05_on_foot
+python3 tools/gen_sprites.py --write 06_bicycle/sprites.asm
+python3 tools/gen_vehicles.py --write 06_bicycle/vehicle_art.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/06_bicycle
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -339,3 +340,75 @@ NASM assembled it anyway, into bytes the CPU refuses: SIGILL, the
 moment `enemy_near` first ran (the first right-click). The bot saw it
 as a gdb MemoryError (it was reading a dead process) until gdb was
 told to stop on SIGILL. Now it's `mov r8d, edx` then `imul r8d, edx`.
+
+## `06_bicycle/` — the bicycle
+
+`05_on_foot/`, on a bike: the first rung of the vehicle ladder
+(bicycle, moped, motorcycle, car, van). You spawn riding it.
+
+| Control | Riding |
+|---|---|
+| W A S D | point where you want to go, 8 ways, as when walking: the bike turns toward it (a quarter turn in 7 ticks) and pedals while it's pointing roughly that way, slowing for a sharp turn. No keys: it brakes to a stop |
+| E | get off, beside the bike (the first clear side); near it on foot, get back on ("E: RIDE" on the scoreboard) |
+| mouse, Q, wheel | as on foot; your hit chance is 15% worse riding (one hand on the bars) |
+
+Up to 4 px a tick, against walking's 3, in 21 ticks from standing.
+Walls stop you and you slide along them. Soldiers don't: riding into
+one bumps him 12 px aside, off your line, and slows you to 3/4; at
+2 px a tick or more it's a ram, which hurts him (speed × the bike's
+mass / 8: 16 at top speed, through `event_damage`, so it's your kill if
+he dies), costs you 5 and the bike 6 (of 60), and slows you to 2/3.
+Then you ride on through. Worn to 0, the bike is a grey wreck you
+can't ride until you respawn (on a new one).
+
+**The first version was "insanely hard to control".** It steered like
+a tank: A and D turned, W pedalled, S braked and reversed, and it
+went up to 5 px a tick. Soldiers stopped it dead. The play test: hard
+to control, "the bike should bump them and slow you but not stop
+you", and the speed "a little too much. If the bike is this fast, by
+the time you get a car the car is going to be going too fast." So now
+you point where you want to go, soldiers bump aside, and the bike's
+4 px a tick sets the scale for the ladder: about a pixel a rung
+(moped 5, motorcycle 6, car 6 but tougher, van 5).
+
+**One engine, a table of vehicles.** `vehicles.asm` has the physics
+once, driven by a row of `vehicle_types`: top speed, acceleration,
+braking, drag (for sharp turns), turn rate, mass, health, capacity (for
+deliveries, 10.07), aim penalty, sprites and palette. The bicycle is
+row 0; the other rungs will be more rows and more art, not more code.
+
+**Position in 1/16 px.** The vehicle's centre is kept in sixteenths of
+a pixel, its heading as 0..255 (0 east, 64 south), and its speed in
+sixteenths a tick, so it accelerates and turns in an arc. The keys'
+direction is a heading from a 3 × 3 table (`key_heading`); the bike
+turns toward it the short way round, at most its turn rate a tick.
+The step along the heading comes from a 256-entry sine table (×256):
+`dx = speed · cos / 256`, `dy = speed · sin / 256`, with `sar` for the
+signed division. Riding, you are where the bike is: the player's
+soldier box is centred on it, so the gangs still target you, shoot
+you and bump into you as before.
+
+**Collisions.** Each tick the bike tries the whole step, testing the
+box there against walls and props (`is_box_blocked`) and soldiers
+(`soldier_at`). A wall: each axis alone (sliding, at 3/4 speed), else
+stop. A soldier: `vehicle_bump` works out which side of your line he's
+on (the cross product of the heading and the vector to him), pushes
+him 12 px that way, square to the heading (if the spot's clear), and
+the bike moves on regardless.
+
+**The art** comes from a new tool, `tools/gen_vehicles.py`: a vehicle
+is a few rectangles in its own frame (the bicycle: two tyres, a frame,
+handlebars, a saddle), and each of 16 headings is rendered by sampling
+every output pixel's centre rotated back into that frame. One drawing,
+16 facings. It writes the step's own `vehicle_art.asm` (with the sine
+table), so `gen_sprites.py` and older steps are untouched. The bike is
+23 px long on a 24 px sprite, longer than the 16 px rider on top of
+it: at first it was 16 px, and the rider hid all but the tyre tips.
+
+**Tests.** Watch mode has no player and no bike: byte-identical to
+10.05 for 12 seeds. A gdb script rode it on Lee Blvd: D took it east to
+top speed (64 sixteenths), S turned it south in 8 ticks at full speed,
+W swung it round to north (slowing to 43 in the turn), no keys braked
+it to 0, and E put the rider off to the side and back on. Another held
+a Crip in its path until contact: 100 → 84, shoved 12 px aside, the
+bike slowed to 42 and rode on through, back at top speed 20 px later.
