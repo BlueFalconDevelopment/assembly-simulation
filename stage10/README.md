@@ -15,11 +15,11 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/01_modules            # the latest: wheel zooms, W A S D pans
+./build/02_factions           # the latest: wheel zooms, W A S D pans
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild the map in maps/
-python3 tools/gen_sprites.py --write 01_modules/sprites.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/01_modules
+python3 tools/gen_sprites.py --write 02_factions/sprites.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/02_factions
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -75,3 +75,57 @@ fixed-seed check: the end state (`soldiers`, `pickups`, `rng_state`,
 `ticks`) is identical to 9.03's for 12 seeds headless and one
 windowed. And `gen_sprites.py --write` on a copy of `sprites.asm`
 writes it back unchanged.
+
+## `02_factions/` — factions instead of two teams
+
+`01_modules/` with the two teams generalized into factions: the
+groundwork for everyone who joins the fight later (Bikers, the cartel,
+the good ole boys, the police, the player). The same game, byte for
+byte.
+
+**Factions.** `Soldier.team` is a faction now: 0 the Crips, 1 the
+Bloods, and `NUM_GANGS` = 2 of them are gangs. `MAX_FACTIONS` = 8
+slots in all. `score`, `tickets`, `boss_state`, `home` and `fwd_sign`
+are sized for every faction (`times MAX_FACTIONS`).
+
+**Who fights whom is a table.** `hostility` in `data.asm` is an
+8 × 8 byte table: row a, column b is 1 if faction a attacks faction b.
+The `HOSTILE dst, a, b` macro (`constants.asm`) reads it: one `lea`
+(the row times 8, plus the column), an `add` of the table's address
+and a `movzx`, with the flags set for a `jz`/`jnz` straight after.
+Every place that used to ask "a different team?" now asks the table:
+
+- `find_nearest_enemy`: only factions we fight are targets
+- hold fire: someone we don't fight first in the line of fire
+- friendly fire: a hit on someone we don't fight
+- scoring: only kills of an enemy count
+- a respawn spot's safety: distance to the nearest enemy
+- the flow fields' sources (below)
+
+**One flow field per faction.** `field_for` holds a field per
+faction, each meaning "toward everyone this faction fights", and
+`bfs_states` a lazy search for each (9.03). `build_fields` seeds
+faction f's field with every living soldier that f is hostile to. With
+two gangs at war, the Crips' field is exactly 9.03's "toward the
+Bloods", so every value read is the same. A soldier follows its own
+faction's field; `bfs_ensure` works out which faction a field
+belongs to from where it lies in `field_for`.
+
+**Still between two gangs:** the Big Homie ("the other gang" is gang
+xor 1), the scoreboard, the win lines and `batch.sh`'s tally. They
+change when a third gang (or the player's own scoreboard) needs them
+to. `check_win` is general already: the last gang standing among any
+number of gangs, reporting the highest-numbered gang when the last
+ones all go out at once, as 9.03 reported the Bloods.
+
+**Proof.**
+- The end state is identical to 10.01's for 12 seeds headless and
+  one windowed.
+- A copy with `MAX_FACTIONS` = 4 (and a 4 × 4 table) plays
+  identically: the indexing follows the constant.
+- A copy with an all-zero table plays a war where nobody fights:
+  score 0–0, a stalemate at 30,000 ticks. The only deaths are the
+  police's and the dog's, which don't use the table yet.
+
+About 4% slower (1.71 s a game): six empty fields get seeded each
+tick.
