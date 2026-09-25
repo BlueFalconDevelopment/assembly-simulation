@@ -117,7 +117,8 @@ questions meant to be answered by experimenting.
 | [`stage6c`](stage6c) | Scale to 50v50, plus the headless `batch.sh` harness |
 | [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire, arenas, pathfinding, respawns, the neighborhood, random encounters, the Big Homie |
 | [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog, then props, shadows, ground effects, day and night, and a zoomable camera |
-| [`stage9`](stage9) | Scale: a map sixteen screens big, drawn only where the camera looks, then real streets from OpenStreetMap (in progress) |
+| [`stage9`](stage9) | Scale: a map sixteen screens big, drawn only where the camera looks, then real streets from OpenStreetMap, and five times faster headless |
+| [`stage10`](stage10) | The game (in progress): a delivery rider working through the gang war. Starts by splitting the source into modules |
 
 In `stage7`, each numbered file is the previous one plus one change:
 
@@ -158,6 +159,12 @@ In `stage9`:
 | `01_world` | A 5120×2880 map (a stand-in: stage 8's neighborhood tiled 4×4), with the map data in its own files; each frame draws only the camera's view, which can now zoom out to a quarter of the map |
 | `02_southside` | A real city's south side from OpenStreetMap, compressed about 5× to 5120×2608: real streets, generated houses, a park, an airport, wrecker lots, a fenced expressway; the generator plugs every gap a soldier could get stuck or jammed in |
 | `03_bfs` | Five times faster headless, the same games byte for byte: the flow-field searches skip a divide per cell and only run as far as a soldier asking for directions needs |
+
+In `stage10`, each step is a folder (`main.asm` plus its modules):
+
+| Step | Change |
+|---|---|
+| `01_modules` | The source split into 21 modules, one per concern; the same machine code as 9.03, byte for byte |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the original
 roadmap, with its status and a list of hard-won traps to avoid.
