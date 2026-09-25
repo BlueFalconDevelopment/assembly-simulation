@@ -39,8 +39,8 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
   - It imports `gen_sprites`, so `__pycache__/` is gitignored.
 - **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app).
   - **Published:** Parts 1–4 (`src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`: 0–6b, 6c–7.02, 7.03–7.06, 7.07–7.08).
-  - **Two drafts waiting, both uncommitted, in `newPOSTS/`:** Part 5 (7.09–7.11: pathfinding, traffic, scoreboard; video embed line at the top) and **Part 6 (7.12–8.06: respawns, the neighborhood, police and pitbull, the Big Homie, all of stage 8; video: "Go" by The Chemical Brothers, embed line at the top)**.
-  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so. It also has an unpushed commit from earlier, `ff30e65` ("Skip Netlify builds for README/drafts-only pushes", `netlify.toml`), left as it is.
+  - **Two drafts waiting in `newPOSTS/`, committed but not pushed (blog commit `fdb9470`):** Part 5 (7.09–7.11: pathfinding, traffic, scoreboard; video embed line at the top) and **Part 6 (7.12–8.06: respawns, the neighborhood, police and pitbull, the Big Homie, all of stage 8; video: "Go" by The Chemical Brothers, embed line at the top)**.
+  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so. The blog repo is 2 commits ahead of GitHub: `ff30e65` ("Skip Netlify builds for README/drafts-only pushes", `netlify.toml`) and `fdb9470` (the drafts). **The first push will still trigger a build**, because it carries the `netlify.toml` change itself. After that, pushes that only touch `newPOSTS/` or `README.md` should skip building.
   - Publishing means turning a draft into `.mdx` in the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top (the user picks the video). Check it with `npm run build`.
 
 **How we work (keep doing this):**
