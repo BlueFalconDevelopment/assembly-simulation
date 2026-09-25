@@ -10,9 +10,10 @@ five times so the whole area fits.
 
 ```bash
 make
-./build/01_world             # the latest: wheel zooms (half size to 4x), W A S D pans
+./build/02_southside         # the latest: wheel zooms (half size to 4x), W A S D pans
 STAGGER=0 ./batch.sh 48      # headless, 4 games at a time
-python3 tools/gen_standin.py # rebuild the stand-in map in maps/
+python3 tools/gen_southside.py  # rebuild the south side map in maps/ (15 s)
+python3 tools/gen_standin.py    # rebuild 01's stand-in map
 ```
 
 `batch.sh`, the Makefile, `tools/gen_neighborhood.py` and
@@ -106,3 +107,137 @@ view, then the scoreboard), and dump `back_buffer` as 2560 × 1440
 RGBA; the view is its top-left `w` × `h`. gdb can't set `cam_src` by
 name (no type information), so use
 `set {int[4]}&cam_src = {x, y, w, h}` and `set {int}&zoom_step = n`.
+
+## `02_southside.asm` — the south side
+
+`01_world.asm` on the real map. The only code change: the camera
+starts where the map says (`MAP_CAM_X`, `MAP_CAM_Y`, between the
+homes). Everything else is the map, from `tools/gen_southside.py`.
+
+**The data.** `maps/southside_osm.json` is a one-time OpenStreetMap
+snapshot of the play area, a rectangle bounded by four roads (SW Lee
+Blvd, SW Sheridan Rd, SW Bishop Rd, S Railroad St), about 3.2 × 1.6
+km. It's stripped to what the generator uses: road types and street
+names, building outlines, land use, parks, pitches, playgrounds,
+school grounds, parking, streams. Coordinates are metres east and
+south of the corner of Lee and Sheridan, not latitude and longitude.
+OpenStreetMap data is © OpenStreetMap contributors, under the ODbL
+(https://www.openstreetmap.org/copyright); the snapshot and the map
+files carry that line.
+
+**Compression.** The map is 5120 × 2608: about 1.56 px a metre,
+where the game's own scale is about 9. So distances shrink and
+things don't. Every street stays where it really is, but at the
+game's widths (60 px main roads, 36 px residential streets, 8 px
+sidewalks), and a block holds four to six houses instead of a
+dozen. The four boundary roads sit 48 px in from the map's edges, so
+they're whole. Alleys and driveways are left out: at this scale an
+alley leaves strips too thin for a house on either side.
+
+**What's real and what's made up.**
+
+- *Real:* the streets, the diagonal road, the expressway, the
+  buildings the data has (mostly the commercial strip along Lee:
+  each one's box, trimmed back where our wider roads now run over
+  it; 76 of the 162 survive, the rest fall in the made-up areas
+  below or are too small once trimmed), parks, playgrounds, school
+  grounds, parking lots, streams.
+- *Generated along the real streets:* 595 houses, two rows back
+  to back in each block, facing their streets, with gable roofs and
+  chimneys. Parked cars at the kerb, trees and bushes in the yards,
+  streetlights on the sidewalks.
+- *Made up, where the data is empty but the area isn't:* the big park
+  in the south-west (ball fields, paths, a pond, a shelter, a
+  parking lot, lots of trees), the airport in the middle south
+  (fenced, on both sides of the diagonal road: a terminal and parking
+  in the triangle north-west of it; a runway, taxiway, apron, five
+  hangars and five small planes south-east of it), and wrecker lots
+  in the south-east (fenced gravel yards of rusty junk cars, some
+  without wheels, with a lane from the gate straight through).
+- *The homes* are made up too: two apartment complexes at street
+  corners (`HOMES` in the generator), SW 20th St & Monroe Ave in
+  the west and SW 9th St & Jefferson Ave in the east, about 2,400
+  px apart. A single block is too small for 50 soldiers' lobby, so
+  each complex is two blocks joined across the second street (that
+  piece of street goes), with the sidewalks round them. Six doors.
+- *The expressway* is fenced on both sides, open where a road
+  crosses it.
+
+**Low cover.** Parked cars, junk cars, every fence and the planes'
+fuselages are props: they block walking, not bullets. Soldiers can
+walk under a plane's wing.
+
+**Police and the dog.** A police route is a lane on a road that
+runs straight across the whole map (real roads drift, so up to 40 px
+of drift is allowed and the lane follows the median). Seven roads
+qualify: Lee and Bishop east-west, Sheridan, 16th, 15th, 11th and
+Railroad north-south, 14 routes. The dog walker uses the sidewalks
+of Lee and Bishop.
+
+**How the generator builds it.** The ground is drawn as an image
+(PIL: roads as thick polylines, areas as polygons, zones as masks),
+then turned into rectangles: runs of one colour in each row, merged
+downward while the rows below repeat them (188,000 rectangles).
+Everything that stands on the ground is placed against an occupancy
+mask, so houses, lots, trees and lamps don't overlap each other or
+the roads. Fences are 4 × 4 blocks along a line, merged into runs.
+
+**Checks.** The same as before on the 569 × 289 grid, with one
+change: small pockets of walkable ground nobody can reach are
+allowed (the map has one, 4 cells, a corner nobody can get to), but
+every pickup is placed in the main connected area and both lobbies
+must be in it. Both lobbies pack 50 soldiers 300 times. And, since
+the first batch, no cracks (below).
+
+**What the batches found.** Four rounds of 144 games, each fixing
+what the last one showed:
+
+1. *A stalemate: cracks.* Replaying its seed (it's in the stalemate
+   line) showed two Crips with knives standing in a 19 px gap between
+   two houses, and nobody able to reach them. A soldier (16 px) fits
+   in a gap that narrow, but the pathfinding grid can't see into it:
+   a cell is walkable only if a 24 × 24 window on its 9 px lattice is
+   clear, which a gap is only sure to hold from 32 px. When a
+   soldier's own cell has no distance, `flow_waypoint` steps to any
+   neighbouring cell that has one, which is why stage 8's parking lot
+   (cars 20 px apart, but only 20 px long) never trapped anyone. A gap
+   as long as a house has no such neighbour anywhere near, and the
+   side step can't get out.
+2. *The west home won 86%, then (pickups mirrored, below) 78%.*
+   Sampling a game every 400 ticks showed most of the east gang
+   standing in a line for thousands of ticks, with knives: a 40 px
+   passage between two houses holds one lane of cells, and an armed
+   teammate going the other way (to the fight) blocked it for good.
+3. So the generator plugs every gap between two solid things (or one
+   and the map's edge), side by side or one above the other, that's
+   16 to 47 px wide with nothing else in it: 48 px is two lanes of
+   cells. Deliberate openings aren't gaps: a complex's doors, fence
+   gates. A gap next to a car loses the car (a hedge there could
+   close a street); any other gap gets a hedge, low cover like a
+   fence. It repeats until there are none, and the checks assert
+   that. The hedges read as what they'd be anyway: hedges between
+   yards, filling the back gardens. The wrecker lots are laid out to
+   the same rule: cars 8 px from the fences and 4 px apart, aisles
+   48 px, and one empty car slot as the lane from the gate.
+4. *Still 62%: a crowd.* About 30 of the east gang's knife carriers
+   round the last gun on their side of the map, which lay *behind*
+   their home, with a teammate who'd just picked one up stuck in the
+   crowd going the other way.
+
+**Pickups.** The last two findings shaped where the guns go: 80 of
+them in 40 pairs, each pair mirrored through the point halfway
+between the two lobbies, and only in the box between the homes. So
+whatever lies near one home lies as near the other (39 of the 80 are
+nearer the west home by walking distance, and the two homes' total
+walking distances to them are within 2%), and a knife carrier going
+for a gun always goes toward the fight.
+
+**Where it stands.** No stalemates since the first round, and the
+two gangs even (Crips 74 of 144). But the west home still wins about
+62% (89 and 91 of 144 in the last two rounds, z ≈ 3 each). The walk
+between the lobbies is 244 cells, and the point where the walking
+distance from each is equal is x ≈ 1,710; the fighting settles a
+little west of it, around x 1,500–1,750, near the west home. Nothing
+there is jammed any more: it looks like the lie of the land. It's
+the first map that isn't symmetric, and the homes are the obvious
+thing to move.

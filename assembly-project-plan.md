@@ -31,6 +31,7 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 | 8.05 | `stage8/05_night` | day and night: a day passes in 4 minutes; dusk and night tints; streetlights, lit lobbies, police headlights and muzzle flashes light the dark (half-res light map + per-channel tables); time on the scoreboard; `TIME=h`. Drawing only |
 | 8.06 | `stage8/06_camera` | mouse-wheel zoom (1×–4×, toward the cursor) and W A S D panning: the camera is a source rectangle for `SDL_RenderCopy`; the frame is drawn exactly as before |
 | 9.01 | `stage9/01_world` | a 5120×2880 map (stand-in: the neighborhood tiled 4×4, `tools/gen_standin.py`); map data in `maps/standin.inc` + `maps/standin_bg.bin` (incbin); each frame copies and draws only the camera's view (`FrameBuffer` origin `ox`/`oy`), zoom out to 0.5×; scoreboard in its own buffer. Headless games 7–9 s |
+| 9.02 | `stage9/02_southside` | the real map (`tools/gen_southside.py` from the stripped OSM snapshot `maps/southside_osm.json`): 5120×2608, 1.56 px/m; real streets and buildings, generated houses, park, airport, wrecker lots, fenced expressway; homes at SW 20th & Monroe and SW 9th & Jefferson (`HOMES`). Generator plugs 16–47 px gaps (hedges, or drops a car); pickups in 40 mirrored pairs between the homes. 144 games: 0 stalemates, gangs even, **west home wins ~62%** (open question). Headless ~9 s a game |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (still the stage 7.06 look), a stage table and per-stage file tables. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. `stage7/README.md` covers game logic (read it before touching `update_soldiers`); `stage8/README.md` covers graphics.
@@ -89,6 +90,9 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 - **`pkill -f pattern` matches the shell running it** if the pattern is in its own command line, and kills that too (exit 144). Use `pgrep -x name` / `kill PID`.
 - **`tee /dev/stderr` truncates a redirected stderr file** on every batch, because it reopens it. `batch.sh` writes each line to stderr directly now.
 - **High-byte registers (`ah`, `dh`...) can't be used in an instruction with a REX prefix** (any of `r8`–`r15`, or `sil`/`dil`): `movzx r13d, dh` is an assembler error. Shift and mask instead.
+- **Generated maps need gaps checked (9.02).** A 16–31 px gap between two solids lets a soldier in where the 9 px grid can't see (walkable needs a clear 24 × 24 window on the lattice): a long one traps him for good. A 32–47 px gap is one lane of cells: soldiers going opposite ways jam in it for thousands of ticks, which showed up only as a lopsided home split. `gen_southside.py`'s `cracks()` finds both; the check asserts none.
+- **A gun behind a home pulls that gang backward (9.02).** Knife carriers go for the nearest gun: the last one left behind a home drew a crowd of 30 that jammed round it. Keep pickups between the homes, and mirrored when the map isn't.
+- **To find what a lopsided batch is doing, sample the game.** A gdb Python script that breaks on `check_win` and reads `soldiers` every 400 ticks (count, mean x, armed, who hasn't moved) found both 9.02 jams in minutes. The scripts: break, `ignore 1 399`, `continue`, read memory with `struct`.
 - **An even grid cell width can't be mirror-symmetric over an odd number of positions** (corner x 0..784 is 785 positions). That's why the pathfinding grid uses 9px cells (09).
 
 ## Why
