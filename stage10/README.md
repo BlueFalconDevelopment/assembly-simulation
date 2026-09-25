@@ -15,16 +15,16 @@ no player, so batches and the fixed-seed checks keep working.
 
 ```bash
 make                          # every step
-./build/07_deliveries         # the latest: you, on a bike, making deliveries
-MODE=watch ./build/07_deliveries  # last gang standing, no player (the default headless)
+./build/08_shifts             # the latest: the game (ENTER starts a shift; saves to ~/.courier_save)
+MODE=watch ./build/08_shifts  # last gang standing, no player (the default headless)
 STAGGER=0 ./batch.sh 48       # headless, 4 games at a time
 python3 tools/gen_southside.py                      # rebuild maps/southside3.* (17 s)
-python3 tools/score_pairs.py build/07_deliveries     # re-score the home pairs (~40 min)
-PAIR=0 ./build/07_deliveries                         # a given pair of homes
+python3 tools/score_pairs.py build/08_shifts     # re-score the home pairs (~40 min)
+PAIR=0 ./build/08_shifts                         # a given pair of homes
 MODE=game STAGGER=0 ./batch.sh 48                   # 48 endless wars, headless
-python3 tools/gen_sprites.py --write 07_deliveries/sprites.asm
-python3 tools/gen_vehicles.py --write 07_deliveries/vehicle_art.asm
-HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/07_deliveries
+python3 tools/gen_sprites.py --write 08_shifts/sprites.asm
+python3 tools/gen_vehicles.py --write 08_shifts/vehicle_art.asm
+HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/08_shifts
 ```
 
 **Steps are folders now.** Each step is `NN_name/`: a `main.asm` and
@@ -469,3 +469,63 @@ seeds. A gdb script took job 2 (state 1), stood at the business (state
 took another and ran its clock out before arriving: $56 offer, $28
 paid. And X dropped a third. A frame capture showed the board, the
 pick-up line and the edge pip.
+
+## `08_shifts/` — shifts and saving
+
+`07_deliveries/` becomes a game you come back to: a title screen,
+shifts, and a save file (`shifts.asm`, `save.asm`).
+
+| State | |
+|---|---|
+| title | The war goes on behind a dimmed view (W A S D pan, as in watch mode). "SOUTH SIDE COURIER", "A NEW SAVE" / "WELCOME BACK" / "YOUR SAVE WAS DAMAGED", your money and shifts, the controls, and "PRESS ENTER TO START YOUR SHIFT" |
+| shift | You, on your bike, with the job board, and 3 minutes on the clock ("SHIFT 2:13", on the right of the scoreboard's second row) |
+| summary | The clock ran out ("SHIFT OVER") or you died ("YOU DIED: SHIFT OVER"): deliveries, earnings, kills, anything lost, your total, and ENTER for the next shift. The shop goes here in 10.09 |
+
+`player_on` now means "a shift is on": the player, the bike, the job
+board and the camera following you all check it already, so they run
+only then. A new flag, `courier`, is game mode in a window.
+
+**Dying ends the shift.** The package is lost (as in 10.07) and so is
+20% of the money you have; your gear stays. The fall plays out first
+(the 3 seconds that used to be the respawn wait).
+
+**The save file** is `~/.courier_save` (or `$SAVE`, or
+`./courier_save` if there's no `$HOME`): 64 bytes of dwords.
+
+| Offset | |
+|---|---|
+| 0 | magic, "CSV1" |
+| 4 | version, 1 |
+| 8 | money |
+| 12, 16, 20 | shifts, deliveries, kills |
+| 24 | best shift ($, before any penalty) |
+| 28–59 | reserved (gear, from 10.09) |
+| 60 | checksum: the sum of the first 15 dwords, xor `0xC0DE5A1E` |
+
+Closing the window mid-shift ends the shift (so its deliveries and
+kills count in the totals: the first play test's save had 6 deliveries
+of 7, the seventh in a shift the window closed on) and saves.
+
+It's written through raw Linux syscalls (`open`, `read`, `write`,
+`close`, `rename`: no libc file functions), at the end of every shift
+and when the window closes. It goes to `<path>.tmp` first and is
+renamed over the save, so a crash in the middle of writing can't leave
+half a save: `rename` replaces the file in one step. A save that's the
+wrong size or has the wrong magic, version or checksum is treated as
+none, and the title says so.
+
+**Text on the view.** `draw_text` drew only on the scoreboard; now it
+draws wherever `text_fb` points, and the overlays point it at the view
+(dimmed twice with `shade_rect`), centred, a line every 24 view px. The
+first version's controls ran off both sides at 2× zoom (a 640 px view
+fits 53 characters), so they're three short lines.
+
+**Tests.** Watch mode has no player: byte-identical to 10.07 for 12
+seeds. With a gdb script and `SAVE=` pointing at a scratch file:
+
+1. No file: "new"; ENTER started a shift (10,798 ticks on the clock);
+   running the clock out wrote 64 bytes: `CSV1`, 1, $123, 1 shift,
+   best $123.
+2. Restarted: "loaded", $123, 1 shift.
+3. One byte changed: "damaged", starting over at $0.
+4. Dying with $500: the summary, "YOU DIED", $400 left ($100 lost).

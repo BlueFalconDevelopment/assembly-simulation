@@ -40,6 +40,7 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 | 10.05 | `stage10/05_on_foot/` | the player (`player.asm`): soldier slot `PLAYER`, `FACTION_PLAYER` 2. WASD + follow cam, right-click lock-on (brackets), left fires at the lock or nearest the cursor, Q swaps pistol/shotgun, walking over guns takes ammo (gun relocates), 150 HP + regen, 85% / 34 dmg, gangs chase only within `PLAYER_AGGRO` 450 and not via flow fields. Watch mode byte-identical to 10.04; tested with a gdb bot (30 kills / 7 deaths) |
 | 10.06 | `stage10/06_bicycle/` | `vehicles.asm`: one physics routine driven by `vehicle_types` rows (bicycle row 0: top 4 px/tick, mass 2, health 60, aim −15%); 1/16 px position, 0..255 heading, sine table; WASD point the way (`key_heading`, turn toward it), no keys brakes; wall slide; soldiers bumped aside (`vehicle_bump`: shove 12 px, ram at ≥ 2 px/tick). Speed ladder ~1 px a rung. Art from `tools/gen_vehicles.py`. Watch byte-identical to 10.05. Reworked after play test (tank steering too hard) |
 | 10.07 | `stage10/07_deliveries/` | `deliveries.asm`: 3 offers (business → house, ≥ 600 px), keys 1/2/3, X drops; markers + edge pip; clock from pickup, late = half pay; pay $10 + 1/60 px + $6 × danger (gangsters near the route); money. Map `southside3` adds `biz_points` (76) / `house_points` (572). Scoreboard two rows (`HUD_H` 40). Fixed `msg_buf` overflow (160 → 512). Watch byte-identical to 10.06 |
+| 10.08 | `stage10/08_shifts/` | `shifts.asm`: title → shift (`SHIFT_TICKS` 10800) → summary, ENTER; death ends the shift, −20% cash. `save.asm`: 64-byte save (`~/.courier_save` / `$SAVE`) via raw syscalls, tmp + rename, checksum, damaged → new. `draw_text` via `text_fb` for overlays. Watch byte-identical to 10.07; save round-trip, damaged and death tested |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (still the stage 7.06 look), a stage table and per-stage file tables. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. `stage7/README.md` covers game logic (read it before touching `update_soldiers`); `stage8/README.md` covers graphics.
@@ -205,6 +206,11 @@ Balance passes with batches (and a scripted delivery bot to test job pay against
 ### Balance note (from the 10.07 play test)
 
 **Job pay can't be tuned yet.** It depends on what things cost, and prices depend on how dangerous the city is. The user's order: first tune the gangsters and the random encounters (numbers, strength: Phase C and after), then build the item list and its price scaling (10.09–10.10), and only then tune delivery pay (`JOB_BASE`, `JOB_PER_PX`, `JOB_DANGER`, `JOB_TIME*` in `deliveries.asm`) against it. Until then, pay stays at 10.07's values ($30–70 a job).
+
+### Notes from the 10.08 play test
+
+- **More random encounters.** The war is "relatively easy to avoid": the city needs more that finds *you* (more frequent or more varied encounters, not just the gangs' fight). Phase C's Bikers, cartel and good ole boys are part of it; revisit the police and dog frequencies too.
+- **The police shouldn't shoot you, and should avoid running you over** (done as 10.09).
 
 ### Open questions for later (not blocking Phase A)
 Shift length (one game day, currently 4 minutes, or more?); how many hitmen kills before the cartel leaves; the good ole boys' crew size and weapons; which abilities make the first shop list; the vehicle ladder's exact tiers and prices, and whether you can shoot while riding a two-wheeler (one-handed, less accurate?); whether civilians are added (they'd give "everyone but civilians" something to mean); sound.
