@@ -854,3 +854,70 @@ numbers move.
   4. Every dropped bottle was gone 62 s later.
 - **Frames:** the roof cross, the door sign and the bottle, and your
   bar yellow at 70/150.
+
+## `13_encounters/` — encounters in town
+
+The play tests said the city was "relatively easy to avoid", and the
+random encounters most of all:
+- **The police** drove only roads that cross the whole map: four lanes
+  along its edges, and three north-south streets.
+- **The dog** was walked along the top and bottom edges.
+
+**The road network.** `tools/gen_southside.py` now exports it as a new
+map version, `maps/southside4.*`. It's the same map with two blocks
+added; the background file is byte-identical to `southside3`'s.
+- **`road_runs`:** every straight east-west or north-south stretch of
+  road. Points of a street's polyline that stay within 8 px of a line
+  make a run, pieces of the same street drawn as several OSM ways are
+  joined, and each run is cut wherever either lane, a whole 40 × 20
+  car checked every 4 px, would hit a wall or a parked car. There are
+  84 runs, 200 px or longer. The diagonal and the curved roads aren't
+  in it.
+- **`road_joins`:** where an east-west run meets a north-south one,
+  within 30 px of their ends so that T-junctions count. There are 210.
+
+![The road network drawn over the map: east-west runs in magenta, north-south runs in cyan, crossings in yellow](../docs/road_network.png)
+
+**In game mode** (`roads.asm`):
+- **The police car turns up out of your sight,** at least 700 px from
+  you, on a random run, going a random way.
+- **It patrols.** At each crossing it passes, it turns 35% of the time,
+  onto whichever way has room. Where its road ends it turns onto the
+  road it meets, or U-turns if there's none. 10.09's wait-then-turn-
+  round for you U-turns into the other lane.
+- **It goes off duty after 90 s,** when you're not looking. Cars come
+  about 5 s apart (1 in 300 a tick; was 1 in 600).
+- **A dog walker walks the sidewalk of a random east-west run** at
+  least 400 px long, starting from an end you can't see. At the far
+  end they're gone if you can't see them, and turn back if you can.
+  Walks come more often (1 in 450; was 900).
+- **An arrested gangster is replaced,** as a killed one is. It used to
+  be out for good. With the police about town (about 20 arrests a
+  war), the gangs would dwindle over a session: the war never stops,
+  even behind the title and the shop. 10.12's build had 7 gangsters
+  gone for good 7½ minutes into a war; this one has none.
+- **In a shift, the scoreboard keeps your line up** instead of
+  announcing the police or the dog, which are out most of the time.
+
+**Measured:**
+- **A traced war** (seed 11, 20,000 ticks, sampled every 10): the car
+  was out 92% of the time, on 51 of the 84 runs, with 106 turns, 11
+  U-turns and 5 trips off duty. It never overlapped a wall or a parked
+  car. Dog walks were out 64% of the time, in 52 different 200 px
+  squares.
+- **With you in a shift** for 12,000 ticks: police cars appeared at
+  least 1,771 px from you, and dog walks began at least 1,015 px and
+  ended at least 1,189 px away.
+- **48 wars:** the Crips took 49.9% of the kills and led in 23.
+
+  | | 10.11 | 10.13 |
+  |---|---|---|
+  | Arrests a war | 5.8 | 21.6 |
+  | Police kills | 10.8 | 26.2 |
+  | Dog kills | 7.5 | 29.5 |
+  | Headless war | 16.5 s | 17.2 s |
+
+**Watch mode keeps the old lanes and walks,** and arrests there are
+still for good. It's byte-identical to 10.12 for 12 seeds headless and
+1 windowed.
+

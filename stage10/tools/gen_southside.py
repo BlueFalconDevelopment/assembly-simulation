@@ -66,7 +66,8 @@ SCORES = os.path.join(MAPS, "pair_scores.json")
 # the map's files: a new name whenever the format changes, so older steps
 # keep building against the files they were made with (southside.inc is
 # 9.02's format, from stage9/tools/gen_southside.py)
-MAP_FILE = "southside3"       # 10.07: + the delivery points (southside2 is 10.03's)
+MAP_FILE = "southside4"       # 10.13: + the road network (southside3 is 10.07's,
+                              # southside2 10.03's)
 DOOR_GAP = 10                 # a door spot: a soldier box this far out from a wall
                               # (2 was too close for the 9 px grid to see: 204 of 595 houses)
 MIN_JOB = 600                 # px: the game won't offer a delivery shorter than this
@@ -1313,6 +1314,92 @@ def routes(m):
     return rs, walks
 
 
+RUN_MIN = 200                 # px: the shortest stretch of road worth driving (10.13)
+RUN_STRAIGHT = 8              # px a stretch may wander off its line
+CAR_L, CAR_T = 40, 20         # the police car, long way and across
+
+
+def road_net(m):
+    """the road network (10.13): every straight east-west or north-south
+    stretch of road ("runs"), cut wherever either lane is blocked, and
+    where they cross ("junctions"). A car drives a run in its lane and
+    can turn at a junction. Runs: axis (0 east-west, 1 north-south),
+    the centre line's coordinate, from, to, lane offset, road half-width.
+    Junctions: the east-west run, the north-south run, x, y"""
+    raw = []
+    for hw, n, ln in m.roads:
+        if hw not in ROAD_W or hw == 'motorway':
+            continue
+        half = ROAD_W[hw] / 2
+        for ax in (0, 1):
+            # chains of points that stay within RUN_STRAIGHT of a line
+            i = 0
+            while i < len(ln) - 1:
+                j = i + 1
+                while j < len(ln):
+                    pts = ln[i:j + 1]
+                    cs = [p[1 - ax] for p in pts]
+                    along = [p[ax] for p in pts]
+                    mono = all(b > a for a, b in zip(along, along[1:])) or \
+                        all(b < a for a, b in zip(along, along[1:]))
+                    if max(cs) - min(cs) > 2 * RUN_STRAIGHT or not mono:
+                        break
+                    j += 1
+                pts = ln[i:j]
+                if len(pts) >= 2:
+                    along = [p[ax] for p in pts]
+                    cs = sorted(p[1 - ax] for p in pts)
+                    a, b = min(along), max(along)
+                    if b - a >= RUN_MIN // 2:
+                        raw.append([ax, cs[len(cs) // 2], a, b, half])
+                i = max(j - 1, i + 1)
+    # one street drawn as several ways: join pieces on the same line
+    raw.sort(key=lambda r: (r[0], r[1], r[2]))
+    merged = []
+    for r in raw:
+        for q in merged:
+            if q[0] == r[0] and abs(q[1] - r[1]) < 12 and r[2] <= q[3] + 40 and q[2] <= r[3] + 40:
+                q[2], q[3], q[4] = min(q[2], r[2]), max(q[3], r[3]), max(q[4], r[4])
+                break
+        else:
+            merged.append(list(r))
+    runs = []
+    for ax, c, a, b, half in merged:
+        c = round(c)
+        o = 22 if half >= 26 else 18
+        a, b = max(int(a), -CAR_L), min(int(b), (m.W if ax == 0 else m.H) + CAR_L)
+        # both lanes clear, the whole car, every 4 px along
+        ok = []
+        for t in range(a, b - CAR_L + 1, 4):
+            if ax == 0:
+                lanes = [(t, c + o - CAR_T), (t, c - o)]
+                clear = all(not box_hits(m, max(x, 0), y, min(x + CAR_L, m.W), y + CAR_T)
+                            for x, y in lanes)
+            else:
+                lanes = [(c - o, t), (c + o - CAR_T, t)]
+                clear = all(not box_hits(m, x, max(y, 0), x + CAR_T, min(y + CAR_L, m.H))
+                            for x, y in lanes)
+            ok.append((t, clear))
+        start = None
+        for t, clear in ok + [(None, False)]:
+            if clear and start is None:
+                start = t
+            elif not clear and start is not None:
+                end = (t if t is not None else ok[-1][0] + 4) - 4 + CAR_L
+                if end - start >= RUN_MIN:
+                    runs.append((ax, c, start, end, o, int(half)))
+                start = None
+    runs.sort()
+    joins = []
+    for i, (ax, c, a, b, o, half) in enumerate(runs):
+        if ax != 0:
+            continue
+        for k, (ax2, c2, a2, b2, o2, half2) in enumerate(runs):
+            if ax2 == 1 and a - 30 <= c2 <= b + 30 and a2 - 30 <= c <= b2 + 30:
+                joins.append((i, k, c2, c))
+    return runs, joins
+
+
 # ---------------------------------------------------------------- checks
 
 def buckets_of(rects, B=128):
@@ -1536,6 +1623,9 @@ def write(m):
     block("street_lamps", m.lamps, "streetlights: x, y (their 8x8 heads)")
     block("cop_routes", m.routes, "police routes: x, y, w, h, dx, dy (a lane, from off the map)")
     block("dog_walks", m.walks, "dog walks: start x, y, dx (along a sidewalk, from off the map)")
+    m.runs, m.joins = road_net(m)
+    block("road_runs", m.runs, "the road network (10.13): straight stretches with both lanes clear: axis (0 east-west, 1 north-south), centre line, from, to, lane offset, road half-width")
+    block("road_joins", m.joins, "... where an east-west run meets a north-south one: run, run, x, y")
     out.append(f"    ; the background, in maps/{MAP_FILE}_bg.bin: ground (x, y, w, h, colour),")
     out.append("    ; shadows (x, y, w, h), objects (x, y, w, h, colour)")
     for name, (off, n, size) in offs.items():
