@@ -62,16 +62,17 @@ alone. If you die, the shift ends and you lose a fifth of your cash.
 |---|---|
 | W A S D | Point where to ride (or walk) |
 | E | Get on or off the bike |
-| Right-click / left-click | Lock on / shoot |
-| Q | Swap between the pistol and the shotgun |
+| Right-click / left-click | Lock on / shoot, or throw a grenade |
+| Q | Next weapon |
 | 1 2 3 | Take a job from the board |
 | X | Drop the job |
 | Mouse wheel | Zoom |
 | ENTER | Go to the shop, or start a shift from it |
 | W S, E (in the shop) | Choose, buy |
+| A D (in the shop) | Change page: gear, guns, rides |
+| ESC or P | Pause: resume, controls, options, quit to title |
 
-Coming next: a vehicle ladder (bicycle, moped, motorcycle, car, van),
-more guns and abilities. After that,
+Coming next: an inventory screen, abilities, the economy, and a story. After that,
 new trouble: Biker packs, cartel hit teams, and the good ole boys in a
 pickup truck.
 
@@ -282,6 +283,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `14_bikers` | The Bikers: a clubhouse in town, and a pack of five armored riders on motorcycles who raid a gang's turf now and then, shooting everyone, you included |
 | `15_rides` | The vehicle ladder: moped, motorcycle, car and van, bought in the shop's new RIDES page and picked before each shift. Cars stop bullets and kill when they ram |
 | `16_guns` | An SMG, a rifle, a bat and grenades (with blasts and scorch marks) on the shop's new GUNS page |
+| `17_pause` | ESC or P pauses everything, with a menu: resume, controls, options, and quit to title (you keep your pay, not the package) |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the working
 plan: the current status, the roadmap for the game, and a list of

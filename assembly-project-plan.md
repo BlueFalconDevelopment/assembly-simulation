@@ -1,27 +1,39 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-25, end of day) — read this first when picking the project back up
+## Status (as of 2026-09-26, end of day) — read this first when picking the project back up
 
-**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10), and the tuning pass has started (10.11 crews, 10.12 weed and health, 10.13 encounters, 10.14 Bikers), and the progression content is under way (10.15 rides, 10.16 guns). **Latest build: `stage10/16_guns/`** (`main.asm` plus 33 modules, with the generated map in `stage10/maps/southside5.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.16.**
+**Where things stand:** the sim is finished, and Stage 10 has turned it into a playable game. It has three phases so far:
+- **Foundations** (10.01–10.04): modules, factions, fair homes, the endless war.
+- **The player** (10.05–10.10): on foot, the bike, deliveries, shifts and saving, the police, the shop.
+- **Tuning** (10.11–10.14): turf crews, weed and health, encounters in town, the Bikers.
 
-What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van."** (named in 10.10; the typos are on purpose, a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1"; the van is a meta joke about the user's real life, **not a game goal: keep it out of the game**):
-- You're a courier on a bicycle making deliveries through an endless Crips-vs-Bloods war. The map is a city's south side, built from real OpenStreetMap streets (5120×2608).
-- The title screen shows your save. **ENTER** starts a 3-minute shift.
-- Take a job from a board of three with **1**, **2** or **3**. Ride to the business, pick up the package, and deliver it to a house before the clock runs out. Pay depends on distance and on how many gangsters are near the route. **X** drops a job.
-- Movement:
-  - **W A S D** point where you ride, or walk.
-  - **E** gets on and off the bike.
-- Fighting:
-  - **Right-click** locks on.
-  - **Left-click** shoots.
-  - **Q** swaps between the pistol and the shotgun.
+**Progression content** is half done: 10.15 vehicles and 10.16 guns are in; abilities and price scaling are next.
+
+**Latest build: `stage10/16_guns/`** (`main.asm` plus 33 modules, with the generated map in `stage10/maps/southside5.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.16** (`b06ae95`). If `git status` shows this plan modified, that's this end-of-day update, left for the user to commit.
+
+**The game:** "MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van." It was named in 10.10. The typos are on purpose, a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1". The van is a meta joke about the user's real life, **not a game goal: keep it out of the game.**
+- **The setting:** you're a courier making deliveries through an endless Crips-vs-Bloods war, on a city's south side built from real OpenStreetMap streets (5120×2608).
+- **The loop:** title → **shop** → a 3-minute **shift** → summary → shop, with **ENTER** moving on.
+- **The shop's pages** (A/D to change, W/S to choose, E to buy):
+  - **GEAR:** body armor, toughness, heavy frame.
+  - **GUNS:** big mags, shotgun, pistol upgrade, SMG, rifle, bat, grenades.
+  - **RIDES:** bicycle, moped, motorcycle, car, van. You keep what you buy and pick one each shift.
+- **Deliveries:** a board of three jobs (**1 2 3**; **X** drops one). Pick up at a business, deliver to a house, on the clock. Pay depends on distance and danger.
+- **Controls:**
+  - **W A S D** point where you ride or walk. **E** gets on and off.
+  - **Right-click** locks on, and **left-click** fires, or throws a grenade.
+  - **Q** cycles weapons.
   - Walking over a gun on the ground takes its ammo.
-- Gangsters chase you when you're within 450 px.
-- The police ignore you, and their car waits instead of running you over.
-- If you die, the shift ends and you lose 20% of your cash.
-- Money and totals save to `~/.courier_save`.
+- **Health:** a bar over you, and "HP 120/150 (8 HITS)" on the scoreboard. Prescription weed heals 60: five random dispensaries (a green cross on the roof) restock it, and gangsters drop it.
+- **The city:**
+  - Each gang's war front, plus 5 turf crews of 3 around the city.
+  - Police patrolling the whole street grid (they ignore you and wait for you).
+  - Dog walks in town.
+  - Biker raids from a clubhouse about every 90 s.
+- **Dying** ends the shift and costs 20% of your cash, never gear.
+- **The save** is `~/.courier_save`: money, totals, gear levels, owned rides and your pick.
 
-`MODE=watch` (the default headless) is still the old last-gang-standing sim, byte-identical from step to step. It's the test harness.
+`MODE=watch` (the default headless) is still the old last-gang-standing sim, byte-identical from step to step. It's the test harness. Everything the player, crews, weed, the road police and the Bikers add is game mode only.
 
 | Step | File | Result |
 |---|---|---|
@@ -66,74 +78,77 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
 | 10.14 | `stage10/14_bikers/` | `bikers.asm`: `FACTION_BIKERS` 4 (fights gangs and you), 5 slots after yours (`FIRST_BIKER`); clubhouse at a random crossing ≥1400 px from homes (biggest building nearby painted black with an orange winged wheel; bikes parked); raids ~90 s: target a random gang member, BFS over crossings (`road_join_nbrs`, map `southside5`) for next hops, a virtual leader rides crossing to crossing, riders follow its trail 45 px apart; 25 s raid then home; 250 HP, 40% of hits through. Motorcycle art in `gen_vehicles.py`. Fixed a crash (macro clobbered the leader's position). 48 wars 50.1% Crips. Watch byte-identical to 10.13 |
 | 10.15 | `stage10/15_rides/` | vehicle ladder: moped/motorcycle/car/van rows (`VEH_ROW`: + `.box` collision square as 4 soldier boxes, `.size` sprite 24/40, `.body` % of hits taken by the vehicle, `.label`); art in `gen_vehicles.py`; shop page RIDES (A/D; buy or pick; owned bits + pick at save bytes 56/57); HEAVY FRAME for any ride; you're hidden inside cars; everything shoots (aim −15..−35%). Prices $300/800/2000/3500 placeholders. Capacity not used yet. Watch byte-identical to 10.14 |
 | 10.16 | `stage10/16_guns/` | `weapons.asm`: `PW_*` player weapons (pistol, shotgun, SMG, rifle, grenades, bat) and a `pgun` table (range, hit, dmg, cd, looks) read by `player_fire`; Q cycles; bat melee (nearest within 30, no ammo); grenades thrown ≤260 px in an arc, blast 90 px (250→40; you at half; after the play test, was 70 px 150→10), scorch stamped, drawn flash/fireball/smoke. Shop items get a `.page` (GEAR/GUNS/RIDES; `page_rows`, `page_item`); new items appended (save order). Watch byte-identical to 10.15 |
+| 10.17 | `stage10/17_pause/` | `pause.asm`: ESC/P pauses a shift; everything freezes (main loop skips updates; render skips effect ageing, flash/linger countdowns, stamps); menu RESUME / CONTROLS / OPTIONS (placeholder) / QUIT TO TITLE (keep pay, lose package, no penalty); `overlay_zoom`; font `<`. Watch byte-identical to 10.16 |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT).
   - The top-level `README.md` covers:
     - the game and its controls
     - the path from Stage 0 here
-    - a progression gallery (`docs/progress/`, 18 frames)
+    - a progression gallery (`docs/progress/`)
     - per-stage tables
+  - `docs/` also has step pictures: `road_network.png`, `bikers.png`, `rides.png`, `guns.png`.
   - **Each `stageN/README.md` is the real changelog.** `stage10/README.md` has a section per step, including play-test reworks and code-review findings.
 - **Stage 10 layout:**
-  - `stage10/NN_name/`: `main.asm` plus modules, in include order: constants, data, sprites, tables, bss, game, pathfinding, hud, respawn, background, camera, lighting, ground, draw_sprites, bosses, events, ai, vehicles, player, deliveries, save, shifts, vehicle_art, results, effects, win, primitives.
-    - `vehicles` must come before `player`, for its macros.
+  - `stage10/NN_name/`: `main.asm` plus modules, in include order: constants, data, sprites, tables, bss, game, pathfinding, hud, respawn, background, camera, lighting, ground, draw_sprites, bosses, events, roads, ai, crews, vehicles, weapons, player, deliveries, save, shifts, shop, meds, bikers, vehicle_art, results, effects, win, primitives.
+    - Macros must be defined before they're used. `vehicles` and `weapons` come before `player`. Where a module earlier in the order needs a later macro (`VEH_TYPE` in hud/events), it's written out by hand.
   - `stage10/Makefile` builds every folder into `build/NN_name`, using `.SECONDEXPANSION` and `-i $*/`.
-  - `batch.sh` runs watch-mode batches.
+  - `batch.sh` runs batches; `MODE=game` plays 8-minute endless wars.
 - **Maps** (`stage10/maps/`, shared, **versioned by name**):
   - `southside.*`: 10.01–10.02
   - `southside2.*`: 10.03–10.06, adding the six home sites and pairs
   - `southside3.*`: 10.07–10.12, adding `biz_points` and `house_points`
   - `southside4.*`: 10.13, adding the road network (`road_runs`, `road_joins`)
   - `southside5.*`: 10.14 on, adding each crossing's neighbours (`road_join_nbrs`)
+  - The generator is deterministic, and every `_bg.bin` since `southside3` is byte-identical, so git stores one copy.
   - `pair_scores.json`: the fair-pair batch results
   - `southside_osm.json`: the stripped OpenStreetMap snapshot
 - **Tools** (`stage10/tools/`):
-  - `gen_southside.py`: the map generator. It handles street data, houses, crack plugging, home sites and delivery points.
+  - `gen_southside.py`: the map generator. It handles streets, houses, crack plugging, home sites, delivery points and the road network (`road_net`, `join_nbrs`).
   - `gen_sprites.py`: pixel art as text grids.
-  - `gen_vehicles.py`: the bicycle's 16 facings, for `vehicle_art.asm`.
+  - `gen_vehicles.py`: vehicles drawn once and rendered at 16 headings (bicycle, moped, motorcycle at 24 px; car, van at 40 px), plus the sine table.
   - `score_pairs.py`: batches each home pair.
   - `profile.py`: a SIGINT sampler under gdb, because perf is blocked.
-  - `gen_neighborhood.py`: kept for reference.
 - **Blog:** `~/Claude/tech-blog` (Astro; auto-deploys to Netlify on a push to `main`; live at https://tech-blog-bluefalcon.netlify.app).
-  - **Published:** Parts 1–4 (`src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`, covering 0–6b, 6c–7.02, 7.03–7.06 and 7.07–7.08).
-  - **Two drafts are waiting in `newPOSTS/`, committed but not pushed** (blog commit `fdb9470`):
-    - Part 5: 7.09–7.11.
-    - Part 6: 7.12–8.06. Its video is "Go" by The Chemical Brothers.
-    - Stages 9 and 10 have no draft yet.
-  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so.
-    - The blog repo is 2 commits ahead: `ff30e65` (`netlify.toml`, which skips builds for drafts-only pushes) and `fdb9470`.
-    - The first push will still trigger a build.
+  - **Published:** Parts 1–6 (`src/content/blog/bare-metal-deathmatch{,-2..-6}.mdx`, covering Stages 0–8.06).
+  - **Draft:** Part 7, `newPOSTS/Learning x86-64 Assembly Part 7 - From Battle Sim to Game.md` (2026-09-26), covering Stage 9 and 10.01–10.16.
+    - It's not committed or pushed.
+    - Its video line is a `TODO`, for the user to pick.
+    - Its two images point at the GitHub repo's `docs/` (raw URLs), because the blog has no images folder.
   - Publishing means turning a draft into `.mdx` in the house style:
     - `--[ BANNER ]--` text blocks, 74 chars wide
     - bold lead-ins instead of `###`
     - prose wrapped at 72 columns
     - a "PREVIOUSLY" intro
     - a "WHAT'S LEFT" checklist
-    - `<YouTubeEmbed id="..." title="Song - Artist" />` at the top; the user picks the video
+    - `<YouTubeEmbed id="..." title="Song - Artist" />` at the top
     - check it with `npm run build`
-- **Never write the city's real name** anywhere: code, docs, commits, blog, tools, file names or memory. Say "the south side" or use street names. Run `grep -rci` for it before each commit.
+  - Don't push the blog repo unless asked.
+- **Never write the city's real name** anywhere: code, docs, commits, blog, tools, file names or memory. Say "the south side" or use street names; the blog avoids street names too. Run `git grep -ci` for it before each commit.
 
 **How we work (keep doing this):**
 - **One change = one step folder.**
   - Copy the previous folder to `stage10/NN_name/`.
-  - Update `title_prefix` in `data.asm` and the header comments.
-  - Add a section to `stage10/README.md`, and a row to the table above and to the top-level README.
+  - Update `title_prefix` in `data.asm` and the header comments in `main.asm` (what the step does, and the questions).
+  - Add a section to `stage10/README.md`, a row to the table above, and a row to the top-level README.
 - **Watch mode must stay byte-identical** unless a step means to change the sim: the fixed-seed end-state check below, 12 seeds headless plus 1 windowed, against the previous step.
-- **Player features get a scripted gdb test.** A Python bot under the dummy driver presses keys by writing SDL state, and checks memory. Resolve symbols with `nm`, because gdb confuses `player_ammo` with `PLAYER_AMMO`. Use `handle SIGILL stop nopass`.
+- **Game-mode changes to the war get a game-mode batch:** `MODE=game STAGGER=0 ./batch.sh 48 build/NN 300`. Check the Crips' share of kills (about 50%), crashes, and time per war.
+- **Player features get a scripted gdb test.** A Python bot under the dummy driver presses keys by writing SDL's key state, calls routines with `call (int)fn(args)`, and checks memory. Resolve symbols with `nm`, because gdb confuses `player_ammo` with `PLAYER_AMMO`. Use `handle SIGILL stop nopass`.
+- **Look at the frames:** capture with `SDL_RenderReadPixels` at `SDL_RenderPresent`, and read the PNGs. `TIME=12` gives daylight. Setting `courier` to 0 hides the overlays, and `cam_src` moves the camera when you're not in a shift.
 - **The play-test loop:**
   1. Build, prove, test.
-  2. Open **3 windowed games** one after another (`for i in 1 2 3; do ./build/NN; done`, in the background).
-  3. Wait for the user's feel feedback.
+  2. Open games for the user.
+  3. Wait for their feel feedback.
   4. Rework **the same step** until they're happy.
 
-  Their feedback has changed the design three times: lock-on and a stronger player (10.05), point-where-you-go steering and bumping (10.06), and police that leave you alone (10.09).
-- **Suggest `/code-review high stage10/NN_name` before each commit.** It found 8 real problems in 10.09.
+  Their words have reshaped many steps: lock-on (10.05), steering (10.06), police (10.09), the van item out (10.10), stronger guns (10.11), health and weed (10.12), bigger grenades (10.16).
+  - **For shop content,** play-test on a separate save: `SAVE=<scratchpad>/playtest.sav`, a valid 64-byte save written by a small Python script with $10,000, never the real one. Top it up the same way; the checksum is the sum of the first 15 dwords, xor `0xC0DE5A1E`.
+- **Suggest `/code-review high stage10/NN_name` before committing the bigger steps.** It found 8 real problems in 10.09, and 7 in 10.10.
 - **Commit and push only when asked.** Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
-- **Gameplay changes to the sim get batches:** `STAGGER=0 ./batch.sh 48 build/NN 120`, repeated, one batch after another. A lean of about 2 standard deviations gets a fresh 2,400-game sample, decided in advance.
+  - When two steps are committed together, commit them as two commits. Commit the earlier one with the shared docs trimmed back to that step (and the generator, if it changed), then restore the full versions for the second.
 - **Never more than about 4 game processes at once** (`JOBS=4`). The desktop nearly froze at 96.
 
-**Environment variables (10.09):**
+**Environment variables (10.16):**
 - **The game:**
   - `MODE=game|watch`: game is the default windowed, watch the default headless.
   - `SAVE=path`: the save file.
@@ -149,7 +164,7 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
 - **`batch.sh`:** `JOBS=n` (default 4) and `STAGGER=0`.
 
 **Reusable recipes:**
-- **Fixed seed plus end state (gdb), for byte-identical checks:**
+- **Fixed seed plus end state (gdb), for byte-identical checks** (scratchpad `endstate.sh BIN SEED OUT [w]`):
   ```
   SEED=4242 HEADLESS=1 gdb -batch -ex 'break print_result' -ex run \
     -ex "dump binary memory a.bin (char*)&soldiers (char*)&soldiers+3672" \
@@ -158,31 +173,47 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
     -ex "append binary memory a.bin (char*)&ticks (char*)&ticks+4" \
     -ex kill ./build/NN
   ```
-  Do the same for the other build, then `cmp`. That's 102 soldiers × 36 bytes and 82 pickups × 16. For the windowed run, add `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software` and `MODE=watch`.
-- **A frame:** break on `SDL_RenderPresent`, and read the renderer with `SDL_RenderReadPixels` from gdb (the `capture.py` pattern). Conditional breakpoints catch an event, for example `if *(int*)&cop_active != 0`.
-- **Profiling:** `python3 stage10/tools/profile.py ./build/NN`.
-- **Timing a windowed watch game:** it doesn't exit after the win, so time from launch to the win line, as `batch.sh` does.
+  Do the same for the other build, then `cmp`. That's 102 soldiers × 36 bytes (the gangs and the Big Homies; your slot and the Bikers' come after) and 82 pickups × 16. For the windowed run, add `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software` and `MODE=watch`.
+- **Sampling a war:** break on `update_soldiers`, and **re-issue `ignore 1 N` before every `continue`**, because `ignore` only counts once. Headless game mode stops at 28,800 ticks.
+- **A frame:** see "Look at the frames" above. Conditional breakpoints catch an event, for example `if *(int*)&cop_active != 0`.
+- **Profiling:** `MODE=game HEADLESS=1 SEED=21 gdb -batch -x tools/profile.py ./build/NN`.
 
 ### Next steps (the user picks)
 
-1. **The tuning pass, first** (the user, 2026-09-25: tune gangsters and random encounters before weapons and abilities). Gangster strength one on one stays as it is.
-   - 10.11: turf crews, and stronger guns plus a pistol upgrade (done)
-   - 10.12: weed, dispensaries, and a health display (done; the user's request after 10.11)
-   - 10.13: encounters (done). Police lanes and dog walks down interior streets across the map (generated from the street data), not the map edges. More often.
-   - 10.14: the Bikers and their clubhouse (done: pack raids on the road network, with a route planner over its crossings).
-2. **Progression content** (the user, 2026-09-25): vehicles are kept and picked at shift start; everything can shoot; guns SMG, rifle, bat, grenades; abilities nitro, smoke bomb, adrenaline.
-   - 10.15: the vehicle ladder (done)
-   - 10.16: guns (SMG, rifle, bat, grenades) (done)
-   - 10.17: abilities (nitro, smoke bomb, adrenaline)
-   - 10.18: price scaling, package capacity on the job board, then delivery pay
-   - then the garage, the cartel, the good ole boys
-3. **The balance order (the user's):**
-   1. Tune gangster numbers and random encounters.
-   2. Build out the item list and its price scaling.
-   3. Tune delivery pay, which can't be judged until there's something to spend money on.
-4. **Blog:** publish Parts 5 and 6 when the Netlify credits are back, then write about Stages 9 and 10.
+**Decided with the user (2026-09-26).** New build order: 10.17 pause and menu, 10.18 inventory, 10.19 abilities, 10.20 the economy, then lore, then the garage, the cartel and the good ole boys.
+
+1. **10.17 pause and menu:**
+   - **ESC** (and **P**) pauses during a shift. **Everything freezes**: the war, the shift clock, job timers, Biker raids.
+   - The menu has Resume, Controls (a key list), Options (a placeholder until music), and Quit to title.
+   - **Quit to title keeps this shift's earnings**, drops any package with no pay, and has no death penalty.
+   - It's a new game state beside title/shift/summary/shop (`shifts.asm`). Use `draw_overlay` and `TEXT_LINE`. Watch mode must stay byte-identical.
+2. **10.18 inventory:** **TAB** toggles an overlay that **pauses** the game. It shows weapons and ammo, grenades, gear levels, your ride and its health, and the package. **W/S and E equip a weapon** (like the shop); Q still cycles in the field. Leave room for the abilities. First, pull a shared menu helper out of `update_shop` and `update_pause` (key bits with held keys ignored, and the row wrap), and use it for the inventory too (from the 10.17 code review).
+3. **10.19 abilities:** nitro (a speed boost on a cooldown), a smoke bomb (gangsters lose sight of you for a few seconds), and adrenaline (when you're low on health, briefly take less damage and fire faster). Each is a shop item, and they'll need keys and an inventory row.
+4. **10.20 the economy:**
+   1. Price scaling for everything the shop sells. Today's prices are placeholders: vehicles $300–3,500, guns $100–800. Jobs pay $30–70, so a shift makes $100–200.
+   2. Package capacity on the job board, which is in the vehicle table but unused (the van carries 3).
+   3. Then delivery pay, tuned against the prices. That's the user's balance order.
+5. **Lore (after the systems):**
+   - The courier is **a named character**, with a backstory revealed across shifts. The name and backstory are still to be decided with the user. The van joke stays real-life only.
+   - It's told four ways: **shift intro cards**, **flavored job text**, **milestone story beats** (unlocked by shift counts or money), and **scoreboard radio chatter** mid-shift.
+   - Keep the tone: the name is a joke, the war is played straight.
+6. **A refactor to fit in somewhere (10.17 review):** the render pass changes game state: effect ages, the flash and linger countdowns, casing, blood and pool stamps. Moving that into an update step would let the pause's single `jne .render` freeze it all, instead of the `paused` checks in `effects.asm` and `game.asm`'s draw loop. Watch mode must stay byte-identical (effects are cosmetic, but check the stamps' timing).
+7. **Then:** the garage (mid-shift repairs and ammo), the cartel (4 hitmen hunt one gang), and the good ole boys (a pickup-truck mini-boss that leaves beer cans).
+8. **After that:**
+   - **Box art.** It'll probably be made outside the assembly, from a big render of the map and sprites. The title screen could show it.
+   - **Music, written by the user.** The game has no sound code yet. SDL2's core audio (`SDL_OpenAudioDevice`, `SDL_LoadWAV`, `SDL_QueueAudio`) keeps to "SDL2 and nothing else". Plan the format and the looping.
+9. **Blog:** Part 7's draft is waiting; the user picks its video.
 
 ### Traps to avoid (hard-won)
+
+- **gdb's `ignore N` only counts once (10.11).** After it's used up, the breakpoint stops every time. A sampler that set it once took all its "every 300 ticks" samples from the first few seconds (the police "never" came out). Re-issue it before each `continue`.
+- **A macro can reuse your register (10.14).** `JOIN_AT` does `lea rax, [road_joins]`, and the Bikers' leader position was still in `eax`. So "are we there yet?" compared an address, the leader rode off the map, and a flow field was seeded outside the grid (a segfault in `bfs_seed`). Know what each macro touches (`VEH_TYPE`: rax, rcx; `RUN_AT`/`JOIN_AT`: rax).
+- **`equ $ - label` measures everything in between (10.10).** A string put between `title_prefix` and its `_len` made the length cover both. And `$` can't go in a preprocessor `%if`: use a `times -(cond) db 0` build check.
+- **A new field source costs every search (10.11).** Flow fields search from all sources at once, so 30 scattered, stationary crew members made headless wars 55% slower. Things that don't need chasing across the map shouldn't be sources.
+- **Something new in the world can crash old code that trusted it (10.14).** Anything alive becomes a flow-field source and a target; a position off the grid crashes . Keep positions on the map.
+- **Side-stepping can't get round a long barrier (10.11).** A crew member who fled to the far side of the expressway fence paced along it for good. Anyone who has to get somewhere specific needs a flow field to it.
+- **The shop list's order is the save file's (10.10, 10.16).** Items are saved by position, so a new item goes at the end. Moving one to another page is a `.page` field, never a new place in the list.
+- **Frames can lie about timing.** A screenshot "of the blast" caught the smoke, and one "of the clubhouse" caught the summary overlay at night. Capture by state (wait until `boom` is set), not by a tick count, and use .
 
 - **A single test run proves nothing about fairness.** Two separate real bugs (a missing `call rand` that silently un-fixed an earlier turn-order bias, and a pickup-layout symmetry mismatch) each produced *deterministic-looking* one-sided win rates (24 of 24 games, in one case) that were invisible until running 10+ games in a row and counting. If you change spawn positions, pickup positions, or anything in `update_soldiers`'s processing order, re-run a batch of 10-20 games and check the win split before trusting it.
 - **Sampling once a second can hide an infinite loop.** The nastiest bug this session (a soldier stuck oscillating between two positions forever, `y=0 -> y=2 -> y=0 -> ...`) looked like a plain freeze when sampled every 60 ticks, and only became obvious tracing every single tick. If something looks "stuck," trace every tick for a short window before concluding it's just slow.

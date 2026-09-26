@@ -1129,3 +1129,91 @@ items.
      51 to gangsters 0, 40, 60 and 85 px out, and 90 to you at 30 px.
 - **Frames:** the GUNS page, and a grenade in flight, its blast and its
   scorch.
+
+## `17_pause/` — pause
+
+The first of the new functionality planned with the user on
+2026-09-26 (the order is now pause, inventory, abilities, the economy,
+then the lore). **ESC** or **P**, in a shift, pauses the game
+(`pause.asm`).
+
+![Top: the pause menu with QUIT TO TITLE chosen, and what quitting costs. Bottom: the controls page](../docs/pause.png)
+
+**What pauses: everything** (the user's choice). The war, the shift
+clock, the job's clock, the Bikers' raids and the time of day all
+wait. How:
+- The main loop still runs, but while `paused` is set it skips
+  `update_player`, `update_soldiers` and `ticks`. `update_game_state`
+  runs the menu instead of the clock.
+- The frame is still drawn, under the dimmed overlay, and the wheel
+  still zooms (out to the 2x view, which the text is laid out for).
+- The render pass had state of its own that had to stop too. Hit
+  flashes and falls count down there (`game.asm`), and `draw_effects`
+  ages attack effects and stamps casings and blood at set ages. While
+  paused none of that runs, so nothing piles up on the ground.
+
+**The menu** (W/S or the arrows choose; E, SPACE or ENTER picks; ESC or
+P goes back, and from the menu resumes):
+
+| Row | Does |
+|---|---|
+| RESUME | back to the shift |
+| CONTROLS | every key, in two columns |
+| OPTIONS | a placeholder until the music: "VOLUME: COMES WITH THE MUSIC" |
+| QUIT TO TITLE | ends the shift now: you keep what it earned, the package you carry is lost unpaid, and there's no death penalty (the user's choice). It counts as a shift and is saved. Choosing it shows "YOU KEEP YOUR PAY BUT LOSE THE PACKAGE" |
+
+Keys held when the menu opens or closes aren't presses: the E that
+picks RESUME doesn't get you off the bike, and holding ESC pauses once,
+not on and off. `shift_end`'s zoom-out became `overlay_zoom`, shared
+with the menu. The font gains `<`.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.16 for 12 seeds headless and 1
+  windowed.
+- **A gdb bot,** pressing keys through SDL's key array, on a test save:
+  1. ESC paused. 300 frames later, `ticks` and the shift clock hadn't
+     moved and every soldier (the gangs, you, the Bikers) was
+     byte-for-byte the same.
+  2. S, E opened CONTROLS; ESC came back. OPTIONS the same; W W
+     wrapped the choice back to RESUME.
+  3. ESC resumed: the war went on, and you were still on the bike.
+     ESC held 5 ticks paused once. E on RESUME left you on the bike.
+  4. P, W (wraps to QUIT), E with a package: the title, money
+     unchanged, no loss, not died, shifts 0 → 1, the package gone. The
+     war ran on behind the title.
+- **Frames:** the menu, the quit hint, the controls and the options.
+
+**Play test:** "felt good", with no changes.
+
+**Code review** (`/code-review high`, after the play test) found 7
+issues:
+- **Fixed, bugs:**
+  1. **Quitting while dead dodged the death penalty.** You're down for
+     3 s before `shift_end(1)`, and QUIT TO TITLE in that time called
+     `shift_end(0)`. Closing the window did the same, before this step.
+     Now `shift_end` ends any shift as a death while `player_dead` is
+     set, and ESC doesn't pause while you're down.
+  2. **The title repeated the startup save message** ("A NEW SAVE",
+     or the red "DAMAGED") after a quit. `shift_end` now sets
+     `save_status` to loaded once it's saved: "WELCOME BACK".
+  3. **The pause kept its 2x zoom.** `pause_open` remembers your zoom
+     and `pause_close` goes back to it.
+- **Fixed, cleanups:**
+  - ESC and P are tracked once (`pause_prev`, in `update_game_state`),
+    and the press is passed to `update_pause`.
+  - `shift_end` takes the next state (GS_SUMMARY, or GS_TITLE for a
+    quit), instead of the quit path overwriting it.
+- **Left for later:**
+  - `update_pause` repeats `update_shop`'s key reading and row wrap.
+    A shared helper comes in 10.18, with the third menu (the inventory).
+  - The render pass changes game state (effect ages, flash and linger
+    countdowns, stamps), which is why the pause needed checks in
+    drawing code. Moving that into an update step would make one gate
+    enough. It's noted in the plan.
+- **Re-tested:**
+  - Zoom 7 → 5 paused → 7 resumed.
+  - ESC while dead didn't pause.
+  - Dying still cost 20%, and the close-window path while dead now
+    does too.
+  - A quit went to WELCOME BACK.
+  - Watch mode is still byte-identical to 10.16.
