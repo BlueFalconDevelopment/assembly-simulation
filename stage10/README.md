@@ -579,3 +579,116 @@ officers were firing (the Crip went from 100 to 0, you stayed at 150).
 The same play test: the city is "relatively easy to avoid". That's a
 note in the plan, for the new encounters (Phase C) and the police and
 dog frequencies.
+
+## `10_shop/` — the shop, and a new name
+
+**A name.** The game is called *MY CITY IS A WARZONE BUT I NEED
+MONEY!!!1:4thwall break: Help I need to fix my van.* The typos are on
+purpose, a nod to *I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1*. In game mode
+it's the window's title. It's also the title screen's first two lines,
+in capitals because the 5×7 font has no lowercase. The van is a joke
+about real life, not part of the game. The first version of the shop
+had a "FIX MY VAN" item, and it came out after the play test for that
+reason.
+
+**The shop** (`shop.asm`) goes between shifts. The flow is now title →
+shop → shift → summary → shop. The keys:
+
+- W / S or the arrows choose.
+- E or SPACE buys the next level.
+- ENTER starts the shift.
+
+Under the list is what the chosen item does, or how the last try went
+("BOUGHT!", "NOT ENOUGH MONEY", ...). Prices you can't pay show in red,
+and finished items in grey. W and S don't pan the camera while you
+shop.
+
+The first list is upgrades you keep. Each item has a level, and dying
+costs cash, never gear:
+
+| Item | Levels | Each level | Prices |
+|---|---|---|---|
+| BODY ARMOR | 3 | 15% less damage from every hit (gunfire, the dog, your own rams) | $150, $300, $500 |
+| TOUGHNESS | 3 | +25 max health (regen heals to it) | $100, $200, $350 |
+| BIG MAGS | 3 | +30 pistol rounds a life | $60, $120, $200 |
+| SHOTGUN | 2 | +12 shells a life | $250, $200 |
+| BIKE FRAME | 2 | +30 bike health | $120, $240 |
+
+**How it works:**
+- **The list is data.** `shop_items` is a table of `SHOP_ITEM` rows:
+  name, description, max level and three prices. The strings go to
+  `.rodata`, and the rows stay in the table.
+- **Levels become numbers.** `apply_gear` turns them into
+  `player_max_hp`, `player_armor`, `player_rounds`, `player_shells` and
+  `bike_bonus` at the start of each shift. `player_spawn`, the regen
+  cap and `vehicle_spawn` read those instead of the constants.
+- **Armor** is one helper, `armor_damage(victim, damage)`. Both places
+  a soldier loses health call it: `update_soldiers` (gunfire) and
+  `event_damage` (the police, the dog, rams). Only you wear any. The
+  result is rounded down, in your favour.
+- **The save file.** The levels are a byte an item at offset 28 of the
+  save, in the spare bytes 10.08 left for gear. A 10.08 save has zeros
+  there, so it loads as "nothing bought". Loaded levels are clamped to
+  each item's max. A build-time check fails if the list outgrows the
+  save. A purchase is saved at once.
+
+The prices are placeholders. The user's order is to tune the gangsters
+and random encounters first, then the items and their price scaling
+(10.11), then delivery pay.
+
+**A code review** (`/code-review high`) found nine things. Seven were
+fixed:
+
+1. **The watch-mode window title had the game's name in it.** The name
+   went between `title_prefix` and `title_prefix_len equ $ - ...`, so
+   the length took in both. The end-state checks can't see a window
+   title, so they missed it.
+2. **Holding E into a shift threw you off the bike.** E buys in the
+   shop, but the bike's "was E down" flag (`e_prev`) only updates in a
+   shift. `shift_start` now counts E as held.
+3. **Zoomed in past 2×, the overlays ran off the view.** At 4× the
+   shop's heading was gone and the long lines were cut off.
+   `shift_end` now zooms back out to 2×. On the title, summary and
+   shop, `screen_wheel` lets the wheel zoom out but not in past 2×.
+4. **Nothing stopped a fourth level with no fourth price.** It would
+   have read the next row's name pointer as the price. `SHOP_ITEM` now
+   fails the build.
+5. **The armor sum was written out twice.** It's one helper now.
+6. **The docs said armor covers gunfire and the dog.** Your own rams go
+   through it too (5 damage becomes 2 at level 3). That stays, and the
+   docs now say so.
+7. **Two comments were wrong** about when `apply_gear` runs, and one
+   jump went to the next line.
+
+The other finding can't be fixed here. **Older builds wipe the gear.**
+10.08 and 10.09 read the same `~/.courier_save` and still accept it,
+but they write it back with zeros where the shop's bytes are. Bumping
+the save version wouldn't help: they'd call the save damaged and
+start over, losing the money too. Those builds are frozen, so run
+them with `SAVE=/tmp/old.sav`.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.09 for 12 seeds headless and 1
+  windowed (before and after the review fixes).
+- **The fixes:** a gdb script checked each one.
+  - The window titles read "Stage 10.10 - South Side" in watch mode
+    and the game's name in game mode.
+  - With E held from the shop through ENTER, you were still riding. A
+    fresh E press then got you off.
+  - On the title, the wheel zoomed out, but not in past 2×.
+  - Zoomed to 4× in a shift, the summary came back at 2×.
+  - A copy of the list with a 4-level item failed to build, with the
+    new error.
+- **A gdb script:**
+  1. From a new save, ENTER from the title opens the shop.
+  2. With $1000: E bought armor 1 ($850). E held for 30 ticks bought
+     only one more level.
+  3. Down ×3 and SPACE ×2 bought the shotgun twice. A third try said
+     MAXED. Up ×4 wrapped round the list.
+  4. With $50, armor 3 said NOT ENOUGH MONEY and cost nothing.
+  5. ENTER started the shift: 150 HP, 60 rounds, 24 shells, armor
+     70%. 40 damage took 28 HP.
+  6. The clock ran out, and ENTER went back to the shop.
+- **Reloading the save:** a second run loaded the levels and money,
+  bought toughness 2, and the next shift started at 200 HP. A third
+  run loaded that too.

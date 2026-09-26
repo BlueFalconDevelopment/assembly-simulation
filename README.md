@@ -1,4 +1,9 @@
-# Assembly Simulation: South Side Courier
+# Assembly Simulation
+
+### MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van.
+
+*(The typos are on purpose: a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N
+IT!!!1".)*
 
 A game written by hand in x86-64 assembly. You're a courier on a
 bicycle, making deliveries through an endless gang war on a city's
@@ -36,7 +41,9 @@ save file is written with raw Linux syscalls.
    gangsters sit near the route. Late deliveries pay half.
 3. When the shift ends, a summary shows your deliveries, earnings and
    kills.
-4. Money and totals are saved between runs.
+4. Then comes the shop: body armor, toughness, bigger mags, the
+   shotgun and a sturdier bike frame, all kept for good.
+5. Money, gear and totals are saved between runs.
 
 **The war.** Fifty Crips and fifty Bloods fight over the south side
 and never stop:
@@ -60,10 +67,11 @@ alone. If you die, the shift ends and you lose a fifth of your cash.
 | 1 2 3 | Take a job from the board |
 | X | Drop the job |
 | Mouse wheel | Zoom |
-| ENTER | Start a shift, or go on after the summary |
+| ENTER | Go to the shop, or start a shift from it |
+| W S, E (in the shop) | Choose, buy |
 
-Coming next: a shop between shifts, then a vehicle ladder (bicycle,
-moped, motorcycle, car, van), guns, armor and abilities. After that,
+Coming next: a vehicle ladder (bicycle, moped, motorcycle, car, van),
+more guns and abilities. After that,
 new trouble: Biker packs, cartel hit teams, and the good ole boys in a
 pickup truck.
 
@@ -102,8 +110,8 @@ allowed:
    teams became factions with a table of who fights whom. Home sites
    are now picked from pairs that batches proved fair, and the war
    became endless. Then came the player, on foot and then on a
-   bicycle, followed by deliveries, shifts, a save file, and police
-   who leave you alone.
+   bicycle, followed by deliveries, shifts, a save file, police who
+   leave you alone, and a shop. Along the way the game got its name.
    - Every playable step was play-tested and reworked on feel. Aiming
      got a lock-on. The bike's tank steering became
      point-where-you-go. Police that ran you over now wait.
@@ -175,8 +183,8 @@ sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
 cd assembly-simulation/stage10
 make
-./build/09_police            # the game: press ENTER to start a shift
-MODE=watch ./build/09_police # just watch the war, last gang standing
+./build/10_shop              # the game: ENTER for the shop, ENTER again to ride
+MODE=watch ./build/10_shop   # just watch the war, last gang standing
 ```
 
 The save goes to `~/.courier_save` (or `$SAVE`). `TIME=21` starts at
@@ -267,6 +275,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `07_deliveries` | The job: a board of three offers (1, 2, 3), a package to pick up at a business and deliver to a house on the clock, pay by distance and danger |
 | `08_shifts` | A title screen, 3-minute shifts ending in a summary, dying ends the shift and costs 20% of your cash, and a save file written with raw syscalls |
 | `09_police` | The police leave you alone: they don't shoot you, and their car waits instead of running you over |
+| `10_shop` | The shop between shifts: armor, toughness, bigger mags, the shotgun, a sturdier bike frame, kept and saved. And the game gets its name |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the working
 plan: the current status, the roadmap for the game, and a list of
@@ -280,7 +289,7 @@ many games and counting wins:
 
 ```bash
 cd stage10
-STAGGER=0 ./batch.sh 48 build/09_police   # 48 headless games, 4 at a time
+STAGGER=0 ./batch.sh 48 build/10_shop     # 48 headless games, 4 at a time
 ```
 
 `batch.sh` runs the unmodified binary with no window (SDL's `dummy`

@@ -2,9 +2,9 @@
 
 ## Status (as of 2026-09-25, end of day) — read this first when picking the project back up
 
-**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the police step. **Latest build: `stage10/09_police/`** (`main.asm` plus 27 modules, about 11,300 lines, with the generated map in `stage10/maps/southside3.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.09** (`f1eae2f`). If `git status` shows this plan and the top-level README modified, that's this end-of-day update, left for the user to commit.
+**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10). **Latest build: `stage10/10_shop/`** (`main.asm` plus 28 modules, with the generated map in `stage10/maps/southside3.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.10.**
 
-What the game is now, **South Side Courier**:
+What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van."** (named in 10.10; the typos are on purpose, a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1"; the van is a meta joke about the user's real life, **not a game goal: keep it out of the game**):
 - You're a courier on a bicycle making deliveries through an endless Crips-vs-Bloods war. The map is a city's south side, built from real OpenStreetMap streets (5120×2608).
 - The title screen shows your save. **ENTER** starts a 3-minute shift.
 - Take a job from a board of three with **1**, **2** or **3**. Ride to the business, pick up the package, and deliver it to a house before the clock runs out. Pay depends on distance and on how many gangsters are near the route. **X** drops a job.
@@ -59,6 +59,7 @@ What the game is now, **South Side Courier**:
 | 10.07 | `stage10/07_deliveries/` | `deliveries.asm`: 3 offers (business → house, ≥ 600 px), keys 1/2/3, X drops; markers + edge pip; clock from pickup, late = half pay; pay $10 + 1/60 px + $6 × danger (gangsters near the route); money. Map `southside3` adds `biz_points` (76) / `house_points` (572). Scoreboard two rows (`HUD_H` 40). Fixed `msg_buf` overflow (160 → 512). Watch byte-identical to 10.06 |
 | 10.08 | `stage10/08_shifts/` | `shifts.asm`: title → shift (`SHIFT_TICKS` 10800) → summary, ENTER; death ends the shift, −20% cash. `save.asm`: 64-byte save (`~/.courier_save` / `$SAVE`) via raw syscalls, tmp + rename, checksum, damaged → new. `draw_text` via `text_fb` for overlays. Watch byte-identical to 10.07; save round-trip, damaged and death tested |
 | 10.09 | `stage10/09_police/` | the police leave the player alone (play-test request): `FACTION_POLICE` 3 with a hostility row (gangs, not you) for aiming and arrests; `cop_blocked` = strip ahead of the bumper (bike-sized when riding, parked bike too), wait up to `COP_WAIT_MAX` 2 s then U-turn; `rect_hit`. Reworked after `/code-review high` (8 findings: endless wait, rear/side freeze, bike overlap, stale comments, slot special-casing, duplicated overlap). Watch byte-identical to 10.08 |
+| 10.10 | `stage10/10_shop/` | the shop (`shop.asm`): title → shop → shift → summary → shop; W/S choose, E buys. `shop_items` table (`SHOP_ITEM` name, desc, max, 3 prices): armor (−15%/lvl), toughness (+25 HP), big mags (+30 rounds), shotgun (+12 shells), bike frame (+30). Levels a byte each at save offset 28 (old saves load as zeros), `apply_gear` at shift start. The game's name: "MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van." Watch byte-identical to 10.09 |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT).
@@ -156,7 +157,7 @@ What the game is now, **South Side Courier**:
 
 ### Next steps (the user picks)
 
-1. **10.10 The shop screen**, the next step on the roadmap. It goes between shifts: an item table (price, stats), buying and equipping, and the purchases saved in the save file's reserved dwords. After that:
+1. **Next on the roadmap** (10.10, the shop, is done):
    - 10.11: progression content (the vehicle ladder, guns, armor, upgrades, abilities)
    - 10.12: the garage
    - 10.13: the road graph and AI drivers
@@ -195,6 +196,8 @@ What the game is now, **South Side Courier**:
 - **Profiling here: perf is blocked (perf_event_paranoid 4), and gdb can't attach (ptrace_scope 1).** Use `stage9/tools/profile.py`: gdb starts the game, a shell loop sends SIGINT every 20 ms. `handle SIGINT stop noprint` silently means *nostop*; and gdb's Python can't tick from a thread (it holds the lock while the game runs).
 - **NASM assembles `imul r32, r32, r32` into garbage (10.05).** The three-operand form wants an immediate third; with a register it builds bytes the CPU rejects (SIGILL). Use `mov` then two-operand `imul`. A gdb bot saw it only as a MemoryError until `handle SIGILL stop nopass`.
 - **Run `/code-review` on each step folder (10.09).** A high-effort review of 10.09 found an endless-wait safe zone, a rear-freeze and stale comments that the scripted tests (which only tested the intended case) missed.
+- **Never point an older step's build at the real save (10.10).** 10.08 and 10.09 accept `~/.courier_save` and write it back with the shop's bytes zeroed. Run old steps with `SAVE=/tmp/old.sav`.
+- **An `equ $ - label` measures everything between them (10.10).** A string inserted between `title_prefix` and its length line made the length cover both. Put new data after the `_len` line.
 - **Check buffer sizes when a line grows (10.07).** `msg_buf` (160) had silently overflowed since 10.03 as the summary line grew to 233 characters; `nm -n` showed what sat after it.
 - **A spot 2 px from a wall is invisible to the 9 px grid (10.07).** Door spots need ~10 px of clearance to land in a walkable cell.
 - **Shared map files break older steps (10.03).** `stage10/maps/` serves every step folder, so rewriting `southside.inc` in a new format broke 10.01 and 10.02. A format change gets a new file name (`southside2.*`); old ones stay frozen.
