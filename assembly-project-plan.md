@@ -2,7 +2,7 @@
 
 ## Status (as of 2026-09-25, end of day) — read this first when picking the project back up
 
-**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10), and the tuning pass has started (10.11 crews, 10.12 weed and health, 10.13 encounters, 10.14 Bikers). **Latest build: `stage10/14_bikers/`** (`main.asm` plus 32 modules, with the generated map in `stage10/maps/southside5.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.14.**
+**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10), and the tuning pass has started (10.11 crews, 10.12 weed and health, 10.13 encounters, 10.14 Bikers), and the progression content has started (10.15 rides). **Latest build: `stage10/15_rides/`** (`main.asm` plus 32 modules, with the generated map in `stage10/maps/southside5.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.15.**
 
 What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van."** (named in 10.10; the typos are on purpose, a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1"; the van is a meta joke about the user's real life, **not a game goal: keep it out of the game**):
 - You're a courier on a bicycle making deliveries through an endless Crips-vs-Bloods war. The map is a city's south side, built from real OpenStreetMap streets (5120×2608).
@@ -64,6 +64,7 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
 | 10.12 | `stage10/12_meds/` | `meds.asm`: your health bar (green/yellow/red) and "HP h/max (N HITS)" (gang pistol hits after armor); prescription weed (orange Rx bottle, +60 HP, not at full health); 5 random dispensaries (green cross painted on the roof + door sign, restock 30 s); gangsters killed or arrested drop one 10% (45 s; 10–20 about). All on `player_rand`, in a shift only: watch mode and headless game-mode wars identical to 10.11 |
 | 10.13 | `stage10/13_encounters/` | road network in the generator (`road_net`: 84 straight runs with both lanes clear, 210 joins; map `southside4`, bg identical to 3); `roads.asm` (game mode): the police car appears ≥700 px from you on a random run, turns at 35% of crossings, turns at T-ends, U-turns at dead ends, off duty after 90 s out of sight, 1 in 300 a tick; dog walks along east-west runs' sidewalks, 1 in 450; arrests replaced in game mode; the HUD keeps your line in a shift. Car out 92%, never in a wall; 48 wars 49.9% Crips; arrests 5.8→21.6, police kills 10.8→26.2, dog kills 7.5→29.5. Watch byte-identical to 10.12 |
 | 10.14 | `stage10/14_bikers/` | `bikers.asm`: `FACTION_BIKERS` 4 (fights gangs and you), 5 slots after yours (`FIRST_BIKER`); clubhouse at a random crossing ≥1400 px from homes (biggest building nearby painted black with an orange winged wheel; bikes parked); raids ~90 s: target a random gang member, BFS over crossings (`road_join_nbrs`, map `southside5`) for next hops, a virtual leader rides crossing to crossing, riders follow its trail 45 px apart; 25 s raid then home; 250 HP, 40% of hits through. Motorcycle art in `gen_vehicles.py`. Fixed a crash (macro clobbered the leader's position). 48 wars 50.1% Crips. Watch byte-identical to 10.13 |
+| 10.15 | `stage10/15_rides/` | vehicle ladder: moped/motorcycle/car/van rows (`VEH_ROW`: + `.box` collision square as 4 soldier boxes, `.size` sprite 24/40, `.body` % of hits taken by the vehicle, `.label`); art in `gen_vehicles.py`; shop page RIDES (A/D; buy or pick; owned bits + pick at save bytes 56/57); HEAVY FRAME for any ride; you're hidden inside cars; everything shoots (aim −15..−35%). Prices $300/800/2000/3500 placeholders. Capacity not used yet. Watch byte-identical to 10.14 |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT).
@@ -168,7 +169,12 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
    - 10.12: weed, dispensaries, and a health display (done; the user's request after 10.11)
    - 10.13: encounters (done). Police lanes and dog walks down interior streets across the map (generated from the street data), not the map edges. More often.
    - 10.14: the Bikers and their clubhouse (done: pack raids on the road network, with a route planner over its crossings).
-2. **Then the roadmap:** progression content (the vehicle ladder, guns, armor, upgrades, abilities, and their price scaling), the garage, the road graph and AI drivers (if not done for the Bikers), the cartel, the good ole boys. Then tune delivery pay against the prices.
+2. **Progression content** (the user, 2026-09-25): vehicles are kept and picked at shift start; everything can shoot; guns SMG, rifle, bat, grenades; abilities nitro, smoke bomb, adrenaline.
+   - 10.15: the vehicle ladder (done)
+   - 10.16: guns (SMG, rifle, bat, grenades)
+   - 10.17: abilities (nitro, smoke bomb, adrenaline)
+   - 10.18: price scaling, package capacity on the job board, then delivery pay
+   - then the garage, the cartel, the good ole boys
 3. **The balance order (the user's):**
    1. Tune gangster numbers and random encounters.
    2. Build out the item list and its price scaling.

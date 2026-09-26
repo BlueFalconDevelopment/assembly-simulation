@@ -993,3 +993,68 @@ reverse pass still visits the rest in the same order.
   in 28. A headless war took 18.2 s (10.13: 17.2).
 - **A gdb bot:** riding beside the pack cost you 250 health in 2 s, and
   your aim at the lead rider picked him (slot 103).
+
+## `15_rides/` — the vehicle ladder
+
+The first step of the progression content. The moped, the motorcycle,
+the car and the van are four more rows of the vehicle table
+(`vehicles.asm`), with their art from `tools/gen_vehicles.py`.
+
+![Top: the shop's RIDES page, with the bike being ridden, the moped and motorcycle owned, the car chosen at $2000 and the van at $3500 in red. Bottom: the yellow car and the white van on a street](../docs/rides.png)
+
+| | Speed | Health | Body | Ram (mass) | Aim | Price |
+|---|---|---|---|---|---|---|
+| Bicycle | 4 | 60 | – | 2 | −15% | yours |
+| Moped | 5 | 90 | – | 3 | −15% | $300 |
+| Motorcycle | 6 | 130 | – | 5 | −20% | $800 |
+| Car | 6 | 300 | 50% | 12 | −30% | $2,000 |
+| Van | 5 | 400 | 60% | 14 | −35% | $3,500 |
+
+- **Speed** is in px a tick; walking is 3. It tops out at 6, as the
+  user asked back in 10.06.
+- **Body:** that share of what's shot at you comes off the vehicle's
+  health instead (`armor_damage`). When the vehicle is worn through,
+  it's a wreck and you're out. Inside the car or the van you aren't
+  drawn.
+- **A ram** does speed × mass / 8. The car at full speed does 144,
+  which kills anyone.
+- **Aim:** everything can shoot, the bigger the worse.
+- **The prices are placeholders,** for the price-scaling step.
+
+**The user's calls:** you keep every ride you buy, and pick one before
+each shift. The shop has a second page, **RIDES** (A/D). E buys a ride
+and rides it, or picks one you already own. Under the list are the
+chosen ride's speed, health and armor. Ownership (a bit each) and your
+pick are saved in the save's spare bytes 56 and 57, so older saves
+load as "just the bicycle". BIKE FRAME is now HEAVY FRAME: +30 health
+for whatever you ride.
+
+**New fields in each vehicle row:**
+- **`.box`, the collision square.** The car's 22 px box is tested as
+  four soldier-sized boxes in its corners (`vehicle_try`, `VT_CORNER`),
+  so no new collision code was needed.
+- **`.size`, the sprite square.** The car and the van are 40 px.
+- **`.body`,** and a label for the scoreboard ("CAR 274").
+
+The police car's check for your vehicle (`bike_box`) uses its size.
+
+**Not yet:** each row has a package capacity (the van carries 3), but
+deliveries still take one at a time. That's for the job board, with
+delivery pay, after the price scaling.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.14 for 12 seeds headless and 1
+  windowed.
+- **A gdb bot:**
+  1. From a new save with $5,000: bought the car ($3,000 left) and the
+     motorcycle ($2,200). E on an owned ride said RIDING and cost
+     nothing. With $100 the moped was out of reach.
+  2. The shift started in the car: 300 health.
+  3. On an open east-west run it reached 6 px a tick and covered 617 px
+     in 2 s. Turned south off the road, it stopped at the first
+     obstacle. Its box never overlapped a wall or a parked car.
+  4. A 40-damage hit split 20 to you and 20 to the car.
+  5. A full-speed ram killed a gangster.
+  6. A reload kept the rides and the pick.
+- **Frames:** the RIDES page; the car and the van in a lane, with you
+  not drawn inside.

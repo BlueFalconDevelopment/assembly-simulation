@@ -17,6 +17,7 @@ import math, sys
 
 FACINGS = 16          # headings drawn; the game's heading is 0..255
 SIZE = 24             # each facing: SIZE x SIZE pixels, centred
+BIG = 40              # ... the car and the van's (10.15)
 
 # palette slots, filled in by the game: 1 tyre, 2 frame, 3 metal, 4 saddle
 # (longer than the 16 px rider on top of it, so the wheels and the bars
@@ -45,6 +46,37 @@ MOTORCYCLE = [
 ]
 
 
+# the ladder (10.15): the moped, a scooter -- 1 tyres, 2 body,
+# 3 metal, 4 seat
+MOPED = [
+    ("rect", 5.0, -1.3, 10.5, 1.3, 1),    # front tyre
+    ("rect", -10.0, -1.5, -5.0, 1.5, 1),  # back tyre
+    ("rect", -7.0, -2.6, 4.0, 2.6, 2),    # floorboard and body
+    ("rect", 3.0, -3.2, 5.5, 3.2, 2),     # front shield
+    ("rect", 5.0, -5.0, 6.2, 5.0, 3),     # bars
+    ("rect", -6.5, -2.0, -1.0, 2.0, 4),   # seat
+]
+# the car and the van, from above -- 1 tyres, 2 paint, 3 glass and
+# lights, 4 roof
+CAR = [
+    ("rect", 8.0, -9.0, 13.0, -7.0, 1), ("rect", 8.0, 7.0, 13.0, 9.0, 1),      # front tyres
+    ("rect", -13.0, -9.0, -8.0, -7.0, 1), ("rect", -13.0, 7.0, -8.0, 9.0, 1),  # back tyres
+    ("rect", -17.0, -8.0, 17.0, 8.0, 2),  # body
+    ("rect", 5.0, -6.5, 9.5, 6.5, 3),     # windscreen
+    ("rect", -13.0, -6.0, -10.0, 6.0, 3), # back window
+    ("rect", -10.0, -6.5, 5.0, 6.5, 4),   # roof
+    ("rect", 16.0, -7.0, 17.0, -4.5, 3), ("rect", 16.0, 4.5, 17.0, 7.0, 3),    # headlights
+]
+VAN = [
+    ("rect", 9.0, -10.0, 15.0, -8.0, 1), ("rect", 9.0, 8.0, 15.0, 10.0, 1),
+    ("rect", -15.0, -10.0, -9.0, -8.0, 1), ("rect", -15.0, 8.0, -9.0, 10.0, 1),
+    ("rect", -19.0, -9.0, 19.0, 9.0, 2),  # body
+    ("rect", 11.0, -7.5, 15.0, 7.5, 3),   # windscreen
+    ("rect", -18.0, -8.0, 10.5, 8.0, 4),  # the long roof
+    ("rect", 18.0, -8.0, 19.0, -5.5, 3), ("rect", 18.0, 5.5, 19.0, 8.0, 3),    # headlights
+]
+
+
 def sample(shapes, x, y):
     v = 0
     for kind, x0, y0, x1, y1, slot in shapes:
@@ -53,7 +85,8 @@ def sample(shapes, x, y):
     return v
 
 
-def facings(shapes):
+def facings(shapes, size=SIZE):
+    SIZE = size
     out = []
     for f in range(FACINGS):
         a = 2 * math.pi * f / FACINGS       # 0 = east, clockwise (y down)
@@ -89,6 +122,14 @@ def nasm():
         out.append(f"        ; heading {f * 360 // FACINGS} degrees")
         for row in grid:
             out.append("        db " + ",".join(str(v) for v in row))
+    out.append(f"VEHICLE_BIG equ {BIG}             ; (10.15) the car and the van: this square")
+    for name, shapes, size in (("moped", MOPED, SIZE), ("car", CAR, BIG), ("van", VAN, BIG)):
+        out.append(f"    ; the {name} (10.15), {size} x {size}, the same slots")
+        out.append(f"    {name}_sprites:")
+        for f, grid in enumerate(facings(shapes, size)):
+            out.append(f"        ; heading {f * 360 // FACINGS} degrees")
+            for row in grid:
+                out.append("        db " + ",".join(str(v) for v in row))
     out.append("    ; sin_table[a] = sin(a * 2 pi / 256) * 256, a = 0..255 (cos: a + 64)")
     out.append("    sin_table:")
     vals = [round(math.sin(a * 2 * math.pi / 256) * 256) for a in range(256)]
@@ -101,13 +142,16 @@ def nasm():
 def preview(path):
     from PIL import Image
     pal = {0: (96, 140, 78), 1: (20, 20, 20), 2: (200, 40, 40), 3: (170, 170, 175), 4: (60, 40, 30)}
-    im = Image.new("RGB", (SIZE * FACINGS, SIZE * 2))
-    for r, shapes in enumerate((BICYCLE, MOTORCYCLE)):
-        for f, grid in enumerate(facings(shapes)):
+    rows = ((BICYCLE, SIZE), (MOPED, SIZE), (MOTORCYCLE, SIZE), (CAR, BIG), (VAN, BIG))
+    im = Image.new("RGB", (BIG * FACINGS, sum(sz for _, sz in rows)))
+    y0 = 0
+    for shapes, size in rows:
+        for f, grid in enumerate(facings(shapes, size)):
             for y, row in enumerate(grid):
                 for x, v in enumerate(row):
-                    im.putpixel((f * SIZE + x, r * SIZE + y), pal[v])
-    im.resize((SIZE * FACINGS * 4, SIZE * 8), Image.NEAREST).save(path)
+                    im.putpixel((f * BIG + x, y0 + y), pal[v])
+        y0 += size
+    im.resize((im.width * 2, im.height * 2), Image.NEAREST).save(path)
 
 
 if __name__ == "__main__":
