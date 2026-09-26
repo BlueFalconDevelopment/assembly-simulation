@@ -1,10 +1,27 @@
 # Learning Assembly: A RollerCoaster Tycoon-Inspired Scene Project
 
-## Status (as of 2026-09-24, end of day) — read this first when picking the project back up
+## Status (as of 2026-09-25, end of day) — read this first when picking the project back up
 
-**Where things stand:** the roadmap (Stages 0–6c) is done. Stage 7 (sixteen steps) turned the sim into a gang war in a city neighborhood, and **Stage 8 (graphics) is complete: six steps, all drawing only.** **Latest build: `stage8/06_camera.asm`** (18,882 lines: about 12,200 are generated map and sprite data, and about 6,700 are hand-written assembly, comments and the font). Start any new change from a copy of it. **All code is committed and pushed through 8.06** (`11e7774`). If `git status` shows this plan modified, it's this end-of-day update, which was left for the user to commit.
+**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the police step. **Latest build: `stage10/09_police/`** (`main.asm` plus 27 modules, about 11,300 lines, with the generated map in `stage10/maps/southside3.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.09** (`f1eae2f`). If `git status` shows this plan and the top-level README modified, that's this end-of-day update, left for the user to commit.
 
-What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 neighborhood, 3 lives each, last gang standing. They spawn and respawn inside their apartment complexes (randomly swapped each game) and route around buildings with flow-field pathfinding. Police cars and a loose pitbull shake things up, and the losing gang gets a Big Homie miniboss. It's all hand-made pixel art with shadows, blood, day and night, and a camera you can zoom (mouse wheel) and move (W A S D).
+What the game is now, **South Side Courier**:
+- You're a courier on a bicycle making deliveries through an endless Crips-vs-Bloods war. The map is a city's south side, built from real OpenStreetMap streets (5120×2608).
+- The title screen shows your save. **ENTER** starts a 3-minute shift.
+- Take a job from a board of three with **1**, **2** or **3**. Ride to the business, pick up the package, and deliver it to a house before the clock runs out. Pay depends on distance and on how many gangsters are near the route. **X** drops a job.
+- Movement:
+  - **W A S D** point where you ride, or walk.
+  - **E** gets on and off the bike.
+- Fighting:
+  - **Right-click** locks on.
+  - **Left-click** shoots.
+  - **Q** swaps between the pistol and the shotgun.
+  - Walking over a gun on the ground takes its ammo.
+- Gangsters chase you when you're within 450 px.
+- The police ignore you, and their car waits instead of running you over.
+- If you die, the shift ends and you lose 20% of your cash.
+- Money and totals save to `~/.courier_save`.
+
+`MODE=watch` (the default headless) is still the old last-gang-standing sim, byte-identical from step to step. It's the test harness.
 
 | Step | File | Result |
 |---|---|---|
@@ -44,41 +61,116 @@ What a game looks like now: 50 Crips (blue) vs 50 Bloods (red) on a 1280×720 ne
 | 10.09 | `stage10/09_police/` | the police leave the player alone (play-test request): `FACTION_POLICE` 3 with a hostility row (gangs, not you) for aiming and arrests; `cop_blocked` = strip ahead of the bumper (bike-sized when riding, parked bike too), wait up to `COP_WAIT_MAX` 2 s then U-turn; `rect_hit`. Reworked after `/code-review high` (8 findings: endless wait, rear/side freeze, bike overlap, stale comments, slot special-casing, duplicated overlap). Watch byte-identical to 10.08 |
 
 **Where everything lives:**
-- **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT). Top-level `README.md` has the demo GIF (still the stage 7.06 look), a stage table and per-stage file tables. **Each `stageN/README.md` is the real changelog**, with every bug found and fixed. `stage7/README.md` covers game logic (read it before touching `update_soldiers`); `stage8/README.md` covers graphics.
-- **Generators** (Python, in `stage8/tools/`; they write data blocks between marker comments in an `.asm`):
-  - `gen_neighborhood.py`: the map (walls, props, pickups, lobbies, doors, streetlights) plus the three background layers. It checks connectivity, lobby packing, overlaps and decoration placement. `cd stage8/tools && python3 gen_neighborhood.py --write ../NN_name.asm` (`--preview x.png` renders it).
-  - `gen_sprites.py`: all pixel art as text grids (soldiers, police car, parked-car art, dog, pickups, props, fallen soldier, blood). `python3 tools/gen_sprites.py --write NN_name.asm` (`--preview`, `--preview-objects`).
-  - It imports `gen_sprites`, so `__pycache__/` is gitignored.
-- **Blog:** `~/Claude/tech-blog` (Astro, auto-deploys to Netlify on push to `main`, live at https://tech-blog-bluefalcon.netlify.app).
-  - **Published:** Parts 1–4 (`src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`: 0–6b, 6c–7.02, 7.03–7.06, 7.07–7.08).
-  - **Two drafts waiting in `newPOSTS/`, committed but not pushed (blog commit `fdb9470`):** Part 5 (7.09–7.11: pathfinding, traffic, scoreboard; video embed line at the top) and **Part 6 (7.12–8.06: respawns, the neighborhood, police and pitbull, the Big Homie, all of stage 8; video: "Go" by The Chemical Brothers, embed line at the top)**.
-  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so. The blog repo is 2 commits ahead of GitHub: `ff30e65` ("Skip Netlify builds for README/drafts-only pushes", `netlify.toml`) and `fdb9470` (the drafts). **The first push will still trigger a build**, because it carries the `netlify.toml` change itself. After that, pushes that only touch `newPOSTS/` or `README.md` should skip building.
-  - Publishing means turning a draft into `.mdx` in the house style: `--[ BANNER ]--` text blocks (74 chars wide), bold lead-ins instead of `###`, prose wrapped at 72 columns, a "PREVIOUSLY" intro linking the last part, a "WHAT'S LEFT" checklist, and `<YouTubeEmbed id="..." title="Song - Artist" />` at the top (the user picks the video). Check it with `npm run build`.
+- **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT).
+  - The top-level `README.md` covers:
+    - the game and its controls
+    - the path from Stage 0 here
+    - a progression gallery (`docs/progress/`, 18 frames)
+    - per-stage tables
+  - **Each `stageN/README.md` is the real changelog.** `stage10/README.md` has a section per step, including play-test reworks and code-review findings.
+- **Stage 10 layout:**
+  - `stage10/NN_name/`: `main.asm` plus modules, in include order: constants, data, sprites, tables, bss, game, pathfinding, hud, respawn, background, camera, lighting, ground, draw_sprites, bosses, events, ai, vehicles, player, deliveries, save, shifts, vehicle_art, results, effects, win, primitives.
+    - `vehicles` must come before `player`, for its macros.
+  - `stage10/Makefile` builds every folder into `build/NN_name`, using `.SECONDEXPANSION` and `-i $*/`.
+  - `batch.sh` runs watch-mode batches.
+- **Maps** (`stage10/maps/`, shared, **versioned by name**):
+  - `southside.*`: 10.01–10.02
+  - `southside2.*`: 10.03–10.06, adding the six home sites and pairs
+  - `southside3.*`: 10.07 on, adding `biz_points` and `house_points`
+  - `pair_scores.json`: the fair-pair batch results
+  - `southside_osm.json`: the stripped OpenStreetMap snapshot
+- **Tools** (`stage10/tools/`):
+  - `gen_southside.py`: the map generator. It handles street data, houses, crack plugging, home sites and delivery points.
+  - `gen_sprites.py`: pixel art as text grids.
+  - `gen_vehicles.py`: the bicycle's 16 facings, for `vehicle_art.asm`.
+  - `score_pairs.py`: batches each home pair.
+  - `profile.py`: a SIGINT sampler under gdb, because perf is blocked.
+  - `gen_neighborhood.py`: kept for reference.
+- **Blog:** `~/Claude/tech-blog` (Astro; auto-deploys to Netlify on a push to `main`; live at https://tech-blog-bluefalcon.netlify.app).
+  - **Published:** Parts 1–4 (`src/content/blog/bare-metal-deathmatch{,-2,-3,-4}.mdx`, covering 0–6b, 6c–7.02, 7.03–7.06 and 7.07–7.08).
+  - **Two drafts are waiting in `newPOSTS/`, committed but not pushed** (blog commit `fdb9470`):
+    - Part 5: 7.09–7.11.
+    - Part 6: 7.12–8.06. Its video is "Go" by The Chemical Brothers.
+    - Stages 9 and 10 have no draft yet.
+  - **Netlify credits ran out**, so nothing gets pushed to the blog repo until the user says so.
+    - The blog repo is 2 commits ahead: `ff30e65` (`netlify.toml`, which skips builds for drafts-only pushes) and `fdb9470`.
+    - The first push will still trigger a build.
+  - Publishing means turning a draft into `.mdx` in the house style:
+    - `--[ BANNER ]--` text blocks, 74 chars wide
+    - bold lead-ins instead of `###`
+    - prose wrapped at 72 columns
+    - a "PREVIOUSLY" intro
+    - a "WHAT'S LEFT" checklist
+    - `<YouTubeEmbed id="..." title="Song - Artist" />` at the top; the user picks the video
+    - check it with `npm run build`
+- **Never write the city's real name** anywhere: code, docs, commits, blog, tools, file names or memory. Say "the south side" or use street names. Run `grep -rci` for it before each commit.
 
 **How we work (keep doing this):**
-- **One change = one new numbered file** in the current stage folder (`stage8/` now; `stage9/` when scale starts, with Makefile, `batch.sh` and `tools/` copied over). Copy the latest file, add a header comment block, update `title_prefix` and the "Build and run" footer. Document it as a new section in that stage's README, and add a row to the table above and to the top-level README.
-- **The user likes to watch:** after a change, run 3 games in the background, one after another (`for i in 1 2 3; do ./build/NN; done`). The user closes each window to start the next. If a set is still open, wait for it (`while pgrep -x NN >/dev/null; do sleep 1; done`) so windows don't pile up. Report each game's winner, score, and anything notable (arrests, the Big Homie).
-- **Commit and push only when asked.** Commit messages end with the Co-Authored-By line.
-- **Gameplay changes:** batch at least 480 games per setting, 4 at a time and one batch after another (`STAGGER=0 ./batch.sh 48 build/NN 120` repeated; about 0.85 s per neighborhood game). Per-game lines go to stderr, so append with `2>>file` and parse the win line (fields: ticks, score, big homies, big homie at, arrests, police kills, dog kills, crips home). Check the gang split (the side swap should make it even) and, separately, the home split. **A lean around 2 standard deviations gets a fresh 2,400-game sample, decided in advance, before anyone argues about it.** Every lean chased that way so far was chance.
-- **Drawing-only changes:** prove them with the fixed-seed check below (byte-identical `soldiers`, `pickups`, `rng_state`, `ticks` against the previous build, windowed on the dummy driver), then look at gdb frame dumps.
-- **Never more than about 4 game processes at once** (the desktop nearly froze at 96; see memory).
+- **One change = one step folder.**
+  - Copy the previous folder to `stage10/NN_name/`.
+  - Update `title_prefix` in `data.asm` and the header comments.
+  - Add a section to `stage10/README.md`, and a row to the table above and to the top-level README.
+- **Watch mode must stay byte-identical** unless a step means to change the sim: the fixed-seed end-state check below, 12 seeds headless plus 1 windowed, against the previous step.
+- **Player features get a scripted gdb test.** A Python bot under the dummy driver presses keys by writing SDL state, and checks memory. Resolve symbols with `nm`, because gdb confuses `player_ammo` with `PLAYER_AMMO`. Use `handle SIGILL stop nopass`.
+- **The play-test loop:**
+  1. Build, prove, test.
+  2. Open **3 windowed games** one after another (`for i in 1 2 3; do ./build/NN; done`, in the background).
+  3. Wait for the user's feel feedback.
+  4. Rework **the same step** until they're happy.
 
-**Environment variables (all builds that have them):**
-`HEADLESS=1` (no window, flat out), `SEED=n` (replay; a stalemate line prints its seed), `LIVES=n` (per soldier; 0 = unlimited; neighborhood default 3), `RESPAWNS=n` (team pool), `SCORE_LIMIT=n` (0 = last gang standing, the neighborhood default), `BOSS_AT=n` (Big Homie trigger %, default 60; 0 = off), `TIME=h` (8.05+: starting hour), `ARENA=n` (stage 7's arena builds 07–12 only). `batch.sh` takes `JOBS=n` (default 4) and `STAGGER=0`.
+  Their feedback has changed the design three times: lock-on and a stronger player (10.05), point-where-you-go steering and bumping (10.06), and police that leave you alone (10.09).
+- **Suggest `/code-review high stage10/NN_name` before each commit.** It found 8 real problems in 10.09.
+- **Commit and push only when asked.** Commit messages end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`.
+- **Gameplay changes to the sim get batches:** `STAGGER=0 ./batch.sh 48 build/NN 120`, repeated, one batch after another. A lean of about 2 standard deviations gets a fresh 2,400-game sample, decided in advance.
+- **Never more than about 4 game processes at once** (`JOBS=4`). The desktop nearly froze at 96.
+
+**Environment variables (10.09):**
+- **The game:**
+  - `MODE=game|watch`: game is the default windowed, watch the default headless.
+  - `SAVE=path`: the save file.
+  - `PAIR=n`: pick a home pair.
+  - `TIME=h`: the starting hour.
+- **The sim:**
+  - `HEADLESS=1`
+  - `SEED=n`: replay a game.
+  - `LIVES=n`
+  - `RESPAWNS=n`
+  - `SCORE_LIMIT=n`
+  - `BOSS_AT=n`: the Big Homie trigger in %; 0 turns it off.
+- **`batch.sh`:** `JOBS=n` (default 4) and `STAGGER=0`.
 
 **Reusable recipes:**
-- **Fixed seed + end state (gdb), for byte-identical checks:** `SEED=4242 SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software gdb -batch -ex 'break print_result' -ex run -ex "dump binary memory a.bin (char*)&soldiers (char*)&soldiers+3672" -ex "append binary memory a.bin (char*)&pickups (char*)&pickups+288" -ex "append binary memory a.bin (char*)&rng_state (char*)&rng_state+8" -ex "append binary memory a.bin (char*)&ticks (char*)&ticks+4" -ex kill ./build/NN`, the same for the other build, then `cmp`. (102 soldiers × 36 bytes; 18 pickup slots × 16.)
-- **A frame:** `break SDL_LockTexture`, `run`, `ignore 1 900`, `continue`, then dump `back_buffer` (1280×744×4 = 3,809,280 bytes; RGBA) and open it with PIL `Image.frombytes('RGBA',(1280,744),...)`. For an event, use a conditional breakpoint: `break draw_effects if *(int*)&cop_active != 0`, then `delete`, `break SDL_LockTexture`, `continue`, dump.
-- **Timing a windowed game:** it doesn't exit after the win (it waits for the window to close), so time from launch to the win line, as `batch.sh` does.
+- **Fixed seed plus end state (gdb), for byte-identical checks:**
+  ```
+  SEED=4242 HEADLESS=1 gdb -batch -ex 'break print_result' -ex run \
+    -ex "dump binary memory a.bin (char*)&soldiers (char*)&soldiers+3672" \
+    -ex "append binary memory a.bin (char*)&pickups (char*)&pickups+1312" \
+    -ex "append binary memory a.bin (char*)&rng_state (char*)&rng_state+8" \
+    -ex "append binary memory a.bin (char*)&ticks (char*)&ticks+4" \
+    -ex kill ./build/NN
+  ```
+  Do the same for the other build, then `cmp`. That's 102 soldiers × 36 bytes and 82 pickups × 16. For the windowed run, add `SDL_VIDEODRIVER=dummy SDL_RENDER_DRIVER=software` and `MODE=watch`.
+- **A frame:** break on `SDL_RenderPresent`, and read the renderer with `SDL_RenderReadPixels` from gdb (the `capture.py` pattern). Conditional breakpoints catch an event, for example `if *(int*)&cop_active != 0`.
+- **Profiling:** `python3 stage10/tools/profile.py ./build/NN`.
+- **Timing a windowed watch game:** it doesn't exit after the win, so time from launch to the win line, as `batch.sh` does.
 
 ### Next steps (the user picks)
 
-1. **Stage 9, scale.** The user wants all of these eventually:
-   - **More soldiers:** a performance project, measured headless (0.85 s per game now). Suspected hotspots: `first_in_line` (every box × every point on every line of fire) and the hold-fire check that calls it, then `find_nearest_*` (every soldier × every soldier). Profile first (`perf record`).
-   - **More gangs** (3–4 complexes, everyone against everyone). This touches every two-team assumption: `score[2]`, `home[2]`, `fwd_sign[2]`, `field_to0/1`, `tickets[2]`, `boss_state[2]`, the `BOSS0/1` slots, `check_win`, the side swap, the HUD, the win line and `batch.sh`'s tally.
-   - **A bigger or scrolling city.** 8.06's camera is the start: a world bigger than the window means drawing only the visible part (the back buffer is 1280×744 today) and a bigger blockmap and grid.
-2. Tuning as wanted: the Big Homie (11% comebacks at `BOSS_AT=60`), the police (`FEAR_RADIUS`, `COP_CHANCE`), the dog, the amount of blood.
-3. **Publish Parts 5 and 6** when Netlify credits are back (see Blog above). The demo GIF in the README could be re-recorded with the stage 8 look.
+1. **10.10 The shop screen**, the next step on the roadmap. It goes between shifts: an item table (price, stats), buying and equipping, and the purchases saved in the save file's reserved dwords. After that:
+   - 10.11: progression content (the vehicle ladder, guns, armor, upgrades, abilities)
+   - 10.12: the garage
+   - 10.13: the road graph and AI drivers
+   - 10.14: the Bikers
+   - 10.15: the cartel
+   - 10.16: the good ole boys
+
+   See the roadmap below.
+2. **The balance order (the user's):**
+   1. Tune gangster numbers and random encounters.
+   2. Build out the item list and its price scaling.
+   3. Tune delivery pay, which can't be judged until there's something to spend money on.
+3. **More random encounters.** From the 10.08 play test: they're "relatively easy to avoid". The user never met a police car while testing 10.09. A `POLICE=1` switch that forces a patrol early was offered, but not requested.
+4. **Blog:** publish Parts 5 and 6 when the Netlify credits are back, then write about Stages 9 and 10.
 
 ### Traps to avoid (hard-won)
 

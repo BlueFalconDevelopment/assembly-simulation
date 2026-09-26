@@ -1,46 +1,139 @@
-# Assembly Simulation
+# Assembly Simulation: South Side Courier
 
-A 50-vs-50 battle simulation written by hand in x86-64 assembly, built
-up from "never written assembly" one stage at a time.
+A game written by hand in x86-64 assembly. You're a courier on a
+bicycle, making deliveries through an endless gang war on a city's
+south side. It started as "never written assembly" and was built one
+small, tested step at a time.
 
 ![Crips in blue and Bloods in red fight down a residential street between rows of houses, with pistol tracers, shotgun blasts, blood and shell casings on the road](docs/south_side.gif)
 
-*Stage 9.03, about 5 seconds of a fight on the south side map, with
-the camera zoomed in 2×. The Bloods (red) hold the corner while the
-Crips (blue) push up the street. Yellow lines are pistol tracers,
-orange fans are shotgun blasts, and the blood and brass stay where
-they fall. See [Progression](#progression) for how it got here.*
+*The war you ride through (Stage 9.03, camera zoomed in 2×). The
+Bloods (red) hold the corner while the Crips (blue) push up the
+street. Yellow lines are pistol tracers, orange fans are shotgun
+blasts, and the blood and brass stay where they fall.*
 
 The idea comes from Chris Sawyer, who wrote about 99% of RollerCoaster
-Tycoon (1999) in hand-written assembly with a thin layer of C for
+Tycoon (1999) in hand-written assembly, with a thin layer of C for
 Windows. This project works in the same spirit, at a smaller scale.
-Everything is NASM: the AI, combat, pathing, line of sight, line
-drawing, the random number generator, even turning numbers into text.
-SDL2 is called directly from assembly for the window, input and blitting
-pixels. The latest build imports 16 SDL2 functions and four from libc
-(the startup routine, plus `getenv`, `atoi` and `strtoull` to read its
-settings), and nothing else.
+Everything is NASM:
+- the AI, pathfinding, combat and line of sight
+- the vehicle physics, deliveries, menus and the save file
+- line drawing, lighting, the random number generator, and even
+  turning numbers into text
+
+SDL2 is called directly from assembly for the window, input and
+putting pixels on screen. The latest build imports 16 SDL2 functions
+and five from libc (the startup routine, plus `getenv`, `atoi`,
+`strtoull` and `strcmp` to read its settings), and nothing else. The
+save file is written with raw Linux syscalls.
+
+## The game
+
+**The job.** A shift lasts 3 minutes.
+1. A board offers three jobs. Each one is a package to pick up at a
+   business on the main road and deliver to a house on the clock.
+2. Pay depends on the distance, plus a bonus for danger: how many
+   gangsters sit near the route. Late deliveries pay half.
+3. When the shift ends, a summary shows your deliveries, earnings and
+   kills.
+4. Money and totals are saved between runs.
+
+**The war.** Fifty Crips and fifty Bloods fight over the south side
+and never stop:
+- They respawn from their apartment complexes, fight over guns on the
+  street, and route around houses with flow-field pathfinding.
+- When a gang falls behind, it sends out its Big Homie.
+- A police car patrols and arrests gangsters.
+- A walker's pitbull slips its leash now and then.
+
+**You.** Gangsters come after you if you get close. You can fight
+(lock on, shoot, grab ammo off the street), but you're a courier, and
+the smart move is usually to ride around them. The police leave you
+alone. If you die, the shift ends and you lose a fifth of your cash.
+
+| Key | Does |
+|---|---|
+| W A S D | Point where to ride (or walk) |
+| E | Get on or off the bike |
+| Right-click / left-click | Lock on / shoot |
+| Q | Swap between the pistol and the shotgun |
+| 1 2 3 | Take a job from the board |
+| X | Drop the job |
+| Mouse wheel | Zoom |
+| ENTER | Start a shift, or go on after the summary |
+
+Coming next: a shop between shifts, then a vehicle ladder (bicycle,
+moped, motorcycle, car, van), guns, armor and abilities. After that,
+new trouble: Biker packs, cartel hit teams, and the good ole boys in a
+pickup truck.
+
+## How it got here
+
+The project didn't start as a game. It started as a way to learn
+assembly, and each stage only went as far as the one before it
+allowed:
+
+1. **Learning the machine (Stages 0–5).** A hello world with raw
+   syscalls. Registers, the stack and the calling convention. Opening
+   an SDL2 window from assembly. Then a hand-drawn scene of pixels,
+   rectangles and Bresenham lines, animated with double buffering and
+   driven by the keyboard and mouse.
+2. **A battle sim (Stages 6–7).**
+   - 8 against 8, then 50 against 50, with knives, pistols and
+     shotguns.
+   - Then the long part: collision, a hand-rolled RNG, friendly fire,
+     flow-field pathfinding, respawns and a scoreboard.
+   - Then a city neighborhood with Crips and Bloods, a police car, a
+     loose pitbull, and a Big Homie for the gang that's losing.
+   - A headless batch harness played thousands of games to prove
+     every change was fair.
+3. **Graphics (Stage 8).** Hand-made pixel art, shadows, props, blood
+   and brass that stay on the ground, day and night with streetlights,
+   and a zoomable camera. Every step was drawing only, and proven not
+   to change a single game.
+4. **Scale (Stage 9).**
+   - A map sixteen screens big, drawn only where the camera looks.
+   - Then real streets from OpenStreetMap: a city's south side,
+     compressed about 5×, with generated houses, a park, an airport
+     and wrecker lots.
+   - Then a profiler built from gdb, and a 5× speedup that plays the
+     same games byte for byte.
+5. **The game (Stage 10).** The source was split into modules, and two
+   teams became factions with a table of who fights whom. Home sites
+   are now picked from pairs that batches proved fair, and the war
+   became endless. Then came the player, on foot and then on a
+   bicycle, followed by deliveries, shifts, a save file, and police
+   who leave you alone.
+   - Every playable step was play-tested and reworked on feel. Aiming
+     got a lock-on. The bike's tank steering became
+     point-where-you-go. Police that ran you over now wait.
+   - The old sim still runs underneath as `MODE=watch`. Every step is
+     checked against the one before it, byte for byte.
+
+The stage tables below list every step. Each stage's README is the
+changelog, bugs included.
 
 ## Highlights
 
-- **Two teams of 50** fight with knives, pistols and shotguns until one
-  side is wiped out. Everyone starts with a knife. Guns spawn as
-  pickups, get fought over, and drop back onto the map when their owner
-  dies.
-- **Cover and line of sight:** a wall with a gap in the middle. Ranged
-  weapons need a clear line, checked with the same Bresenham walk that
-  draws lines on screen.
-- **Collision, random mirrored spawns, friendly fire and hold fire:**
-  soldiers can't overlap. Shots hit whoever is actually in the way, so
-  soldiers side-step for a clear shot rather than fire through a
-  teammate.
-- **Hand-rolled RNG:** xorshift64, seeded from the CPU's cycle counter
-  (`rdtsc`) through splitmix64, verified bit for bit against a Python
-  reference in gdb.
-- **Tested for fairness, not just "it runs":** a headless batch harness
-  plays dozens of games at once and counts wins. It has caught several
-  real biases that were invisible in any single game, including one
-  exactly one pixel wide. See [Verification](#verification).
+- **A real city's streets.** The map generator reads an OpenStreetMap
+  snapshot and places houses along the real streets. It also plugs
+  every gap narrow enough to trap a soldier or jam a crowd.
+- **One vehicle engine for every tier.** Position in 1/16 px, a
+  0..255 heading with a sine table, sliding off walls, and bumping
+  through soldiers. It's driven by rows in a vehicle table, so a
+  moped or a van will be data plus art, not new code.
+- **Factions and a hostility table.** Who shoots whom, who counts as
+  friendly fire, and whose flow field leads where are all one table
+  in `.data`.
+- **Fair by measurement.** Each game picks home sites from pairs that
+  batches of hundreds of games showed are close to 50/50.
+- **Hand-rolled RNG:** xorshift64, seeded from the CPU's cycle
+  counter (`rdtsc`) through splitmix64, verified bit for bit against a
+  Python reference in gdb. Drawing never touches it, so replays hold.
+- **Tested, not just run.** Headless batches count wins and have
+  caught several biases, one of them exactly one pixel wide. Every
+  refactor is proven byte-identical in gdb, and every player feature
+  has a scripted gdb bot test. See [Verification](#verification).
 
 ## Progression
 
@@ -80,19 +173,20 @@ Linux x86-64 (developed on Ubuntu):
 ```bash
 sudo apt install nasm gdb build-essential libsdl2-dev
 git clone https://github.com/BlueFalconDevelopment/assembly-simulation.git
-cd assembly-simulation/stage9
+cd assembly-simulation/stage10
 make
-./build/03_bfs               # Crips vs Bloods; mouse wheel zooms, W A S D pans; TIME=21 for night
+./build/09_police            # the game: press ENTER to start a shift
+MODE=watch ./build/09_police # just watch the war, last gang standing
 ```
 
-The winner is printed to the terminal when one team is wiped out, for
-example `Team 0 (blue) wins on Pillars! (friendly fire: 0 hits, 0 kills;
-held fire 1954 times)`. The window stays open on the last frame until you close
-it.
+The save goes to `~/.courier_save` (or `$SAVE`). `TIME=21` starts at
+night. The watch mode prints the winner to the terminal, and the
+window stays open on the last frame until you close it.
 
-Every stage directory works the same way: `make` builds each `.asm`
-file in it into `build/`. Stage 0 is the one exception, a single
-syscall-only `hello.asm` built without gcc or libc:
+Every stage directory works the same way: `make` builds each program
+in it into `build/`. Stage 10's programs are folders (`main.asm` plus
+its modules). Stage 0 is the one exception, a single syscall-only
+`hello.asm` built without gcc or libc:
 `nasm -f elf64 hello.asm -o hello.o && ld hello.o -o hello`.
 
 ## How the project is organized
@@ -118,7 +212,7 @@ questions meant to be answered by experimenting.
 | [`stage7`](stage7) | Past the roadmap: collision, random mirrored spawns, xorshift RNG, attack animations, friendly fire, hold fire, arenas, pathfinding, respawns, the neighborhood, random encounters, the Big Homie |
 | [`stage8`](stage8) | Graphics, one drawing-only step at a time: hand-made pixel art for soldiers, pickups, cars and the dog, then props, shadows, ground effects, day and night, and a zoomable camera |
 | [`stage9`](stage9) | Scale: a map sixteen screens big, drawn only where the camera looks, then real streets from OpenStreetMap, and five times faster headless |
-| [`stage10`](stage10) | The game (in progress): a delivery rider working through the gang war. Starts by splitting the source into modules |
+| [`stage10`](stage10) | The game: a courier on a bicycle making deliveries through an endless gang war, with shifts, a save file and a job board |
 
 In `stage7`, each numbered file is the previous one plus one change:
 
@@ -174,8 +268,9 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `08_shifts` | A title screen, 3-minute shifts ending in a summary, dying ends the shift and costs 20% of your cash, and a save file written with raw syscalls |
 | `09_police` | The police leave you alone: they don't shoot you, and their car waits instead of running you over |
 
-[`assembly-project-plan.md`](assembly-project-plan.md) is the original
-roadmap, with its status and a list of hard-won traps to avoid.
+[`assembly-project-plan.md`](assembly-project-plan.md) is the working
+plan: the current status, the roadmap for the game, and a list of
+hard-won traps to avoid.
 
 ## Verification
 
@@ -184,8 +279,8 @@ whether it's fair, so every gameplay change here is checked by playing
 many games and counting wins:
 
 ```bash
-cd stage7
-STAGGER=0 ./batch.sh 48     # 48 headless games of the newest binary at once
+cd stage10
+STAGGER=0 ./batch.sh 48 build/09_police   # 48 headless games, 4 at a time
 ```
 
 `batch.sh` runs the unmodified binary with no window (SDL's `dummy`
@@ -205,14 +300,15 @@ caught, all documented in the stage READMEs:
   half-pixel units (7.06)
 
 For changes that should *not* alter the fight, like the animations,
-gdb gives a stronger check. Fix `rng_state` to the same seed in two
+the refactors and now the whole player side of the game, gdb gives a
+stronger check. Fix `rng_state` to the same seed in two
 builds, run each to the end, and compare the whole game state byte for
 byte.
 
 ## Write-ups
 
-The whole journey, bugs included, is written up as a four-part blog
-series:
+The journey so far, bugs included, is written up as a blog series
+(Stages 0–7.08 so far; more parts are on the way):
 
 1. [Bare Metal Deathmatch: Teaching Myself x86-64 Assembly From Scratch](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch/) (Stages 0–6b)
 2. [Bare Metal Deathmatch II: Fifty a Side, and a Coin That Kept Landing Heads](https://tech-blog-bluefalcon.netlify.app/blog/bare-metal-deathmatch-2/) (6c, 7.01–7.02)
