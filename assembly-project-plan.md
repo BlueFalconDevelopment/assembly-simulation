@@ -2,7 +2,7 @@
 
 ## Status (as of 2026-09-25, end of day) — read this first when picking the project back up
 
-**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10), and the tuning pass has started (10.11 crews). **Latest build: `stage10/11_crews/`** (`main.asm` plus 28 modules, with the generated map in `stage10/maps/southside3.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.11.**
+**Where things stand:** the sim is finished, and Stage 10 is turning it into a game. Phase A (foundations: modules, factions, fair homes, the endless war) is done. Phase B (the player) is done through the shop (10.10), and the tuning pass has started (10.11 crews, 10.12 weed and health). **Latest build: `stage10/12_meds/`** (`main.asm` plus 28 modules, with the generated map in `stage10/maps/southside3.*`). Start the next step from a copy of that folder. **All code is committed and pushed through 10.12.**
 
 What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van."** (named in 10.10; the typos are on purpose, a nod to "I MAED A GAM3 W1TH ZOMB1ES 1N IT!!!1"; the van is a meta joke about the user's real life, **not a game goal: keep it out of the game**):
 - You're a courier on a bicycle making deliveries through an endless Crips-vs-Bloods war. The map is a city's south side, built from real OpenStreetMap streets (5120×2608).
@@ -61,6 +61,7 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
 | 10.09 | `stage10/09_police/` | the police leave the player alone (play-test request): `FACTION_POLICE` 3 with a hostility row (gangs, not you) for aiming and arrests; `cop_blocked` = strip ahead of the bumper (bike-sized when riding, parked bike too), wait up to `COP_WAIT_MAX` 2 s then U-turn; `rect_hit`. Reworked after `/code-review high` (8 findings: endless wait, rear/side freeze, bike overlap, stale comments, slot special-casing, duplicated overlap). Watch byte-identical to 10.08 |
 | 10.10 | `stage10/10_shop/` | the shop (`shop.asm`): title → shop → shift → summary → shop; W/S choose, E buys. `shop_items` table (`SHOP_ITEM` name, desc, max, 3 prices): armor (−15%/lvl), toughness (+25 HP), big mags (+30 rounds), shotgun (+12 shells), bike frame (+30). Levels a byte each at save offset 28 (old saves load as zeros), `apply_gear` at shift start. The game's name: "MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break: Help I need to fix my van." Watch byte-identical to 10.09 |
 | 10.11 | `stage10/11_crews/` | turf crews (`crews.asm`, game mode): 5 crews of 3 per gang at random house spots (700 px from homes and each other, own side first), stand at the post with pistols, fight hostiles within 400 px of it, walk back on a per-crew flow field (searched whole once; `bfs_ensure` skips them), replaced 30 s after death or arrest unless you're within 500 px; crews aren't flow-field sources (they'd slow every search 55%). Houses near a gangster 76–87% (was 21–47%); 48 wars 50.0% Crips; 16.5 s a headless war. After the play test: pistol 34→50, shotgun 60/30→100/50, a PISTOL UPGRADE shop item (3 levels: 66/83/100 dmg, 12/11/10 ticks; $200/400/800). Watch byte-identical to 10.10 |
+| 10.12 | `stage10/12_meds/` | `meds.asm`: your health bar (green/yellow/red) and "HP h/max (N HITS)" (gang pistol hits after armor); prescription weed (orange Rx bottle, +60 HP, not at full health); 5 random dispensaries (green cross painted on the roof + door sign, restock 30 s); gangsters killed or arrested drop one 10% (45 s; 10–20 about). All on `player_rand`, in a shift only: watch mode and headless game-mode wars identical to 10.11 |
 
 **Where everything lives:**
 - **Code repo:** https://github.com/BlueFalconDevelopment/assembly-simulation (public, MIT).
@@ -160,6 +161,7 @@ What the game is now, **"MY CITY IS A WARZONE BUT I NEED MONEY!!!1:4thwall break
 
 1. **The tuning pass, first** (the user, 2026-09-25: tune gangsters and random encounters before weapons and abilities). Gangster strength one on one stays as it is.
    - 10.11: turf crews, and stronger guns plus a pistol upgrade (done)
+   - 10.12: weed, dispensaries, and a health display (done; the user's request after 10.11)
    - 10.13: encounters. Police lanes and dog walks down interior streets across the map (generated from the street data), not the map edges. More often.
    - 10.14: the Bikers and their clubhouse, as pack events. Their motorcycles need to drive the streets, so this may pull the road graph forward.
 2. **Then the roadmap:** progression content (the vehicle ladder, guns, armor, upgrades, abilities, and their price scaling), the garage, the road graph and AI drivers (if not done for the Bikers), the cartel, the good ole boys. Then tune delivery pay against the prices.

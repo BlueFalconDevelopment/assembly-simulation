@@ -796,3 +796,61 @@ The shop's name column got 2 characters wider for "PISTOL UPGRADE".
      was still missing 2,200 ticks later, past its due tick. It
      appeared at the post the tick after you left.
 
+## `12_meds/` — weed, dispensaries, and your health
+
+The play test after 10.11's rework: "Feels good but our character
+should have some kind of health display so we know how many hits we
+can tank. Also we need health pickups." The pickups are prescription
+marijuana, dropped by random gangsters when they're killed or
+arrested, and found in front of medical marijuana dispensaries.
+Everything is in `meds.asm`.
+
+**Your health:**
+- **A bar over you:** green, yellow under half, red under a quarter.
+- **The scoreboard** reads "HP 120/150 (8 HITS)". The hits are how
+  many gang pistol hits (20 damage, after your body armor) you can
+  take, rounded up. The font got a `(`.
+
+**The bottle** is 10 × 14: orange, with a white cap and a green leaf
+on the label. Walk over it and you get 60 health, up to your max. At
+full health you leave it where it is. Gangsters don't go for it.
+
+**Dispensaries:**
+- **Five a game:** businesses from the delivery list, picked at random
+  and at least 500 px apart.
+- **Their look is painted into the background once:** a green cross on
+  a white square on the roof, and a small one by the door. The
+  building is the wall at least 14 × 14 nearest the door spot, within
+  30 px, because the generator puts every business's door spots 10 px
+  outside its walls.
+- **Stock:** a bottle waits at the door, and 30 s after you take it
+  there's another. Every shift starts with all five stocked.
+
+**Drops:**
+- **A killed or arrested gangster drops one 10% of the time.** Every
+  way a gangster dies counts: gunfire, you, the police, the dog.
+- **A dropped bottle lasts 45 s,** blinking for its last 3.
+- **At 20% and 60 s** (the first try) about 40 lay round the map,
+  because the war kills 3–4 gangsters a second, mostly at the front.
+  At 10% and 45 s, sampled every 5 s through a shift, it's about
+  10–20.
+
+**It never touches the war.** Everything runs only in a shift in a
+window, on your own RNG (`player_rand`), so no soldier's random
+numbers move.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.11 for 12 seeds headless and 1
+  windowed.
+- **A headless game-mode war** (seed 5) scored 1072–1053 on both
+  builds.
+- **A gdb bot:**
+  1. Five dispensaries were picked, each with a bottle at the start of
+     the shift.
+  2. Standing at one with 50 HP gave 110, and the restock timer
+     started.
+  3. 30 s later there was a new bottle, which you left alone at full
+     health.
+  4. Every dropped bottle was gone 62 s later.
+- **Frames:** the roof cross, the door sign and the bottle, and your
+  bar yellow at 70/150.
