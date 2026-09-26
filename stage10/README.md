@@ -692,3 +692,107 @@ them with `SAVE=/tmp/old.sav`.
 - **Reloading the save:** a second run loaded the levels and money,
   bought toughness 2, and the next shift started at 200 HP. A third
   run loaded that too.
+
+## `11_crews/` — turf crews
+
+The play tests said the city was "relatively easy to avoid". A sampler
+(gdb, every 300 ticks through two 7½-minute wars in game mode) showed
+why:
+
+| | Seed 7 | Seed 8 |
+|---|---|---|
+| Houses with a gangster within 450 px | 21% | 47% |
+| Businesses with a gangster within 450 px | 18% | 53% |
+
+Every gang member goes for the nearest enemy, so all a hundred of them
+fought in one strip between the two homes. The west third of the map
+and its southern fifth never had a gangster in either war. (The
+sampler's first version reported the police out 0% of the time: gdb's
+`ignore` count only applies once, so after the first sample it stopped
+every tick and every sample came from the first few seconds.)
+
+**Turf crews** (`crews.asm`) are in game mode only. Each gang posts
+five crews of three round the city:
+
+- **The posts** are spots in front of houses, picked at random each
+  game. Each is at least 700 px from both homes' lobbies, 700 px from
+  every other post, and 100 px in from the map's edges. For the first
+  half of the tries a post must be on the gang's own side (nearer its
+  home); after that, anywhere. The gangs take turns, so each always
+  has the same number.
+- **A crew member** is one of the last 15 soldiers of its gang. It
+  starts at the post with a pistol and stands there. It fights anyone
+  hostile within 400 px of the post: rival gangsters, or you if you
+  also come within 450 px of it (`PLAYER_AGGRO`, as before). It never
+  goes for guns on the ground, and never joins the war.
+- **The way back** to its spot is a flow field of the crew's own,
+  toward the post. A post never moves, so each field is searched once,
+  whole, at the start: `bfs_until` runs toward a sentinel cell one past
+  the grid that never gets a distance. `bfs_ensure` knows those fields
+  are finished.
+- **Replacements.** A crew member killed, or arrested, is replaced at
+  its post 30 s later, but never while you're within 500 px.
+- **The rest of each gang**, 35 soldiers, fight the war as before.
+
+**Problems found on the way:**
+1. **With posts only on each gang's own side, some home pairs left one
+   gang so little room that only 2 of the 10 crews fitted.** With 900
+   px spacing it was still 4–8. At 700 px, with the fallback to either
+   side, every one of 8 seeds got all 10.
+2. **Side-stepping isn't enough to get home.** A crew member that fled
+   a police car to the far side of the expressway fence paced along it
+   for the rest of the game, over 1,000 px from its post. The crew
+   fields fixed it: the farthest any member got in three wars was 469
+   px, while chasing someone.
+3. **Crews as flow-field sources slowed headless wars by 55%**
+   (15.4 s → 23.9 s). Every gang field is a search from all its
+   enemies at once, so 30 sources scattered round the map made each
+   search spread from each of them. Crews aren't sources any more,
+   and the war shouldn't steer toward them anyway: 16.5 s a war.
+4. **An arrest put a crew member out for good,** as it does any
+   gangster. Crew members get a replacement instead, and keep their
+   lives.
+
+**Results:**
+- Houses with a gangster within 450 px: 76–87% (was 21–47%).
+  Businesses: 64–77% (was 18–53%).
+- 48 wars: the Crips took 50.0% of the kills and led in 21. There were
+  fewer kills a war (1,735, from 2,180): 30 soldiers left the front.
+- At any moment 80–90% of crew members are alive, and 90% of sightings
+  are within 24 px of the post.
+
+**After the play test:** "It feels a lot better. More making
+decisions on the fly." But the guns should be more powerful with this
+many gangsters about, and the shop should sell a pistol upgrade:
+
+| | Before | Now |
+|---|---|---|
+| Pistol damage | 34 (three hits drop a gangster) | 50 (two) |
+| Shotgun damage, close / far | 60 / 30 | 100 (one blast) / 50 |
+
+The **PISTOL UPGRADE** is a new shop item. It goes last in the list,
+so older saves' bytes still line up.
+
+| Level | Price | Damage | Ticks between shots |
+|---|---|---|---|
+| 0 | – | 50 | 14 |
+| 1 | $200 | 66 | 12 |
+| 2 | $400 | 83 | 11 |
+| 3 | $800 | 100 (one shot drops a gangster) | 10 |
+
+`apply_gear` sets `player_pistol_dmg` and `player_pistol_cd` from the
+two tables, and `player_fire` reads those instead of the constants.
+The shop's name column got 2 characters wider for "PISTOL UPGRADE".
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.10 for 12 seeds headless and 1
+  windowed (after the rework too).
+- **The pistol upgrade:** `apply_gear` gave 50/14, 66/12 and 100/10 at
+  levels 0, 1 and 3. A save from 10.10 loads with it at level 0.
+- **A gdb bot:**
+  1. Put 250 px from a post, you lost 280 HP to its crew in 4 s.
+  2. Moved to 700 px, the crew went back to its spots.
+  3. With one member killed while you stayed near, the replacement
+     was still missing 2,200 ticks later, past its due tick. It
+     appeared at the post the tick after you left.
+

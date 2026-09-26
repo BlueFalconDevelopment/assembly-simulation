@@ -276,6 +276,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `08_shifts` | A title screen, 3-minute shifts ending in a summary, dying ends the shift and costs 20% of your cash, and a save file written with raw syscalls |
 | `09_police` | The police leave you alone: they don't shoot you, and their car waits instead of running you over |
 | `10_shop` | The shop between shifts: armor, toughness, bigger mags, the shotgun, a sturdier bike frame, kept and saved. And the game gets its name |
+| `11_crews` | Turf crews: each gang posts five crews of three round the city, which guard their corner (and shoot at you). Most houses are now within reach of a gangster. Your guns hit harder, and the shop sells a pistol upgrade |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the working
 plan: the current status, the roadmap for the game, and a list of
