@@ -281,6 +281,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `13_encounters` | The police patrol the whole street grid (a road network from the map generator) and the dog is walked through town, both more often |
 | `14_bikers` | The Bikers: a clubhouse in town, and a pack of five armored riders on motorcycles who raid a gang's turf now and then, shooting everyone, you included |
 | `15_rides` | The vehicle ladder: moped, motorcycle, car and van, bought in the shop's new RIDES page and picked before each shift. Cars stop bullets and kill when they ram |
+| `16_guns` | An SMG, a rifle, a bat and grenades (with blasts and scorch marks) on the shop's new GUNS page |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the working
 plan: the current status, the roadmap for the game, and a list of

@@ -1058,3 +1058,74 @@ delivery pay, after the price scaling.
   6. A reload kept the rides and the pick.
 - **Frames:** the RIDES page; the car and the van in a lane, with you
   not drawn inside.
+
+## `16_guns/` — guns, a bat, and grenades
+
+The second step of the progression content: new weapons for you
+(`weapons.asm`), bought on the shop's new GUNS page. The gangs keep
+what they had.
+
+![Top: the shop's GUNS page. Bottom: a grenade in the air, its yellow flash, the orange fireball with a yellow core, the smoke shrinking, and the scorch it leaves](../docs/guns.png)
+
+| | Fires every | Damage | Hit | Range | A life, a level | Price |
+|---|---|---|---|---|---|---|
+| Pistol | 14..10 ticks | 50..100 | 85% | 250 | 60 (+30 Big Mags) | (upgrade $200..800) |
+| Shotgun | 30 | 100 close / 50 | 95% / 65% | 80 / 150 | 12 shells | $250, $200 |
+| SMG | 5 | 22 | 70% | 280 | 60 rounds | $400, $300 |
+| Rifle | 45 | 120 | 90% | 600 | 10 rounds | $600, $400 |
+| Bat | 30 | 60 | 95% | 30 | no ammo | $100 |
+| Grenades | thrown | 40–250 in 90 px | – | 260 | 2 | $300 a level |
+
+**How it works:**
+- **One table.** `pgun` gives each weapon its range, hit chance,
+  damage, time between shots, and how it looks (the soldier weapon
+  your sprite holds, and its attack effect: the SMG and rifle show
+  tracers, the bat a thrust). `player_fire` reads the table. The only
+  special cases are the shotgun's close blast and the bat: the bat hits
+  the nearest enemy within 30 px, skips the line-of-fire check, and
+  spends nothing.
+- **Q** takes the next weapon you have: one with ammo, or the bat. An
+  empty weapon swaps itself the same way.
+- **Grenades** are thrown at your lock or the cursor, at most 260 px
+  away, and arc through the air at 5 px a tick. The blast is
+  `nade_blast`:
+  - Everyone within 90 px, centre to centre, takes 250 at the middle,
+    down to 40 at the edge. A gangster within about 64 px dies. That
+    includes the Bikers and everyone else, and you at half, with spawn
+    protection and armor still counting. The first version was 70 px
+    and 150 to 10; the play test asked for "a little more
+    devastating", and halving your own share keeps the bigger blast
+    from mostly killing you.
+  - Kills of your enemies count as yours.
+  - The ground gets a dark scorch mark that stays for the rest of the
+    game.
+  - The drawing: a yellow flash, an orange fireball with a yellow
+    core, then smoke that shrinks away.
+- **What a life starts with** comes from the shop (`apply_gear`,
+  `player_loadout`). The pistol's damage and rate go into its row of
+  the table.
+
+**The shop's items** now each say which page they're on: GEAR (body
+armor, toughness, heavy frame), GUNS (big mags, shotgun, pistol
+upgrade, SMG, rifle, bat, grenades) and RIDES. A/D go forward and back
+through the pages. The new items go at the end of the list, because
+the list's order is the save file's. The text under the list is
+anchored under a page's 7 rows (`SHOP_ROWS_MAX`), not under all 10
+items.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.15 for 12 seeds headless and 1
+  windowed.
+- **A gdb bot:**
+  1. The GUNS page had 7 rows, GEAR 3. Bought every gun all the way.
+  2. The shift started with the pistol in hand, and 150 / 24 / 120 /
+     20 / 6 / 1 of the pistol, shotgun, SMG, rifle, grenades and bat.
+  3. Q ×6 went shotgun, SMG, rifle, grenades, bat, pistol.
+  4. The SMG did 17.6 damage a pull at 150 px, about 22 × 80%. The
+     rifle hit at 500 px. The bat hit at 20 px and spent nothing.
+  5. A grenade killed the gangster it landed on, and counted the kill
+     as yours.
+  6. After the rework, a blast set off from gdb did 250, 156, 110 and
+     51 to gangsters 0, 40, 60 and 85 px out, and 90 to you at 30 px.
+- **Frames:** the GUNS page, and a grenade in flight, its blast and its
+  scorch.
