@@ -66,8 +66,8 @@ SCORES = os.path.join(MAPS, "pair_scores.json")
 # the map's files: a new name whenever the format changes, so older steps
 # keep building against the files they were made with (southside.inc is
 # 9.02's format, from stage9/tools/gen_southside.py)
-MAP_FILE = "southside4"       # 10.13: + the road network (southside3 is 10.07's,
-                              # southside2 10.03's)
+MAP_FILE = "southside5"       # 10.14: + each crossing's neighbours (southside4 is
+                              # 10.13's, southside3 10.07's, southside2 10.03's)
 DOOR_GAP = 10                 # a door spot: a soldier box this far out from a wall
                               # (2 was too close for the 9 px grid to see: 204 of 595 houses)
 MIN_JOB = 600                 # px: the game won't offer a delivery shorter than this
@@ -1400,6 +1400,20 @@ def road_net(m):
     return runs, joins
 
 
+def join_nbrs(joins):
+    """for each crossing: the crossings either side of it along each of
+    its two runs, -1 where there's none (a route planner's graph, 10.14)"""
+    out = []
+    for i, (h, v, x, y) in enumerate(joins):
+        west = [(jx, k) for k, (h2, v2, jx, jy) in enumerate(joins) if h2 == h and jx < x]
+        east = [(jx, k) for k, (h2, v2, jx, jy) in enumerate(joins) if h2 == h and jx > x]
+        north = [(jy, k) for k, (h2, v2, jx, jy) in enumerate(joins) if v2 == v and jy < y]
+        south = [(jy, k) for k, (h2, v2, jx, jy) in enumerate(joins) if v2 == v and jy > y]
+        out.append((max(west)[1] if west else -1, min(east)[1] if east else -1,
+                    max(north)[1] if north else -1, min(south)[1] if south else -1))
+    return out
+
+
 # ---------------------------------------------------------------- checks
 
 def buckets_of(rects, B=128):
@@ -1626,6 +1640,7 @@ def write(m):
     m.runs, m.joins = road_net(m)
     block("road_runs", m.runs, "the road network (10.13): straight stretches with both lanes clear: axis (0 east-west, 1 north-south), centre line, from, to, lane offset, road half-width")
     block("road_joins", m.joins, "... where an east-west run meets a north-south one: run, run, x, y")
+    block("road_join_nbrs", join_nbrs(m.joins), "... each crossing's neighbours (10.14): the next crossing west and east along its east-west run, north and south along its north-south one (-1: none)")
     out.append(f"    ; the background, in maps/{MAP_FILE}_bg.bin: ground (x, y, w, h, colour),")
     out.append("    ; shadows (x, y, w, h), objects (x, y, w, h, colour)")
     for name, (off, n, size) in offs.items():

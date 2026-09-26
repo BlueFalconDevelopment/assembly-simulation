@@ -921,3 +921,75 @@ added; the background file is byte-identical to `southside3`'s.
 still for good. It's byte-identical to 10.12 for 12 seeds headless and
 1 windowed.
 
+## `14_bikers/` — the Bikers and their clubhouse
+
+A motorcycle club, from the Stage 10 plan's "packs as an event". It's
+in game mode only (`bikers.asm`).
+
+![Top: the clubhouse, with a black roof and an orange winged wheel, and five red-tanked motorcycles parked by the corner. Bottom: the pack riding in a line up a street](../docs/bikers.png)
+
+**The clubhouse.** Each game, a crossing on the road network is picked
+at random for it. It must be at least 1,400 px from both homes, 200 px
+from the map's edges, and have two or more ways out. The biggest
+building within 160 px of the crossing gets a black roof and an orange
+winged wheel painted on it; the nearest building was often a small
+house. When the pack's at home, their bikes are parked by the corner.
+
+**A raid** comes about every 90 s after the first minute. Five riders
+in black leather and orange bandanas ride out. `FACTION_BIKERS` fights
+both gangs and you, you and the gangs fight them, and the police leave
+them be. Each has 250 health, and only 40% of a hit gets through.
+
+1. **The target:** they pick a gang at random, and one of its living
+   members. The crossing nearest him is the goal.
+2. **The route:** a breadth-first search from the goal over the
+   crossings gives every crossing its next hop. The generator now
+   exports each crossing's neighbours along both of its roads
+   (`road_join_nbrs`, map version `southside5`).
+3. **Riding:** a virtual leader rides crossing to crossing in the right
+   lane, at 5 px a tick. The riders follow its exact trail, 9 ticks
+   (45 px) apart, pulling out of the clubhouse one by one. They turn
+   where it turned, so the pack stays in a line.
+4. **The raid:** 25 s riding round the block. At each crossing they
+   take a random way on, but head back toward the target if they're
+   more than 500 px off. They shoot the nearest rider or gangster
+   they're allowed to hit, or you, within 260 px, in sight, twice a
+   second.
+5. **Home:** the route is searched again from the clubhouse. Each rider
+   parks and goes in as he arrives.
+
+A dead rider drops his gun (and sometimes weed) and stays dead for the
+raid. If the whole pack dies, the raid's over. The scoreboard says
+BIKERS RIDING, in orange, when they set out, even during your shift.
+
+**The motorcycle** is `gen_vehicles.py`'s second vehicle, drawn once
+and rendered at 16 headings like the bicycle: fat tyres, a tank, an
+exhaust, chrome bars, and a red tank. It was black at first, but that
+was lost on the road.
+
+**The Bikers' slots** are 5 soldier slots after yours (`FIRST_BIKER`).
+`update_soldiers` skips everything from yours on. Dead slots after
+yours change nothing for the others: every loop skips the dead, and the
+reverse pass still visits the rest in the same order.
+
+**Bugs found on the way:**
+1. **Crash: a flow field seeded from off the map.** The leader rode off
+   the top of the map, and as a field source it sent the search out of
+   the grid. The cause: after moving the leader, the macro that finds
+   the next crossing's row reuses `rax`, which still held the leader's
+   new position. So "are we there yet?" compared a memory address. The
+   position lives in `edx` now.
+2. **Too fragile at first.** With 60% of a hit getting through and a
+   40 s raid, 5 of 6 packs were wiped out before they could ride home.
+   At 40% and 25 s, 4 of 6 rode back, 3 of them with riders reaching
+   the clubhouse.
+
+**Tests:**
+- **Watch mode:** byte-identical to 10.13 for 12 seeds headless and 1
+  windowed.
+- **Traced wars** (seeds 11–13): 6 raids, 6–20 kills each, no rider
+  ever inside a wall.
+- **48 wars:** no crashes; the Crips took 50.1% of the kills and led
+  in 28. A headless war took 18.2 s (10.13: 17.2).
+- **A gdb bot:** riding beside the pack cost you 250 health in 2 s, and
+  your aim at the lead rider picked him (slot 103).

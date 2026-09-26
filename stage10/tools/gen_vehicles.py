@@ -32,6 +32,19 @@ BICYCLE = [
 ]
 
 
+# the Bikers' motorcycle (10.14): the same slots -- 1 tyres, 2 body and
+# tank, 3 chrome, 4 seat -- longer, fatter tyres, a tank, a pipe
+MOTORCYCLE = [
+    ("rect", 5.0, -1.8, 11.8, 1.8, 1),    # front tyre
+    ("rect", -11.8, -2.0, -5.0, 2.0, 1),  # back tyre
+    ("rect", -6.5, -2.2, 6.0, 2.2, 2),    # body
+    ("rect", 0.5, -3.2, 5.0, 3.2, 2),     # tank
+    ("rect", -10.0, 2.2, -2.5, 3.4, 3),   # exhaust
+    ("rect", 6.2, -6.0, 7.4, 6.0, 3),     # bars
+    ("rect", -6.0, -2.0, 0.5, 2.0, 4),    # seat
+]
+
+
 def sample(shapes, x, y):
     v = 0
     for kind, x0, y0, x1, y1, slot in shapes:
@@ -70,6 +83,12 @@ def nasm():
         out.append(f"        ; heading {f * 360 // FACINGS} degrees")
         for row in grid:
             out.append("        db " + ",".join(str(v) for v in row))
+    out.append("    ; the Bikers' motorcycle (10.14), the same way, the same slots")
+    out.append("    motorcycle_sprites:")
+    for f, grid in enumerate(facings(MOTORCYCLE)):
+        out.append(f"        ; heading {f * 360 // FACINGS} degrees")
+        for row in grid:
+            out.append("        db " + ",".join(str(v) for v in row))
     out.append("    ; sin_table[a] = sin(a * 2 pi / 256) * 256, a = 0..255 (cos: a + 64)")
     out.append("    sin_table:")
     vals = [round(math.sin(a * 2 * math.pi / 256) * 256) for a in range(256)]
@@ -82,13 +101,13 @@ def nasm():
 def preview(path):
     from PIL import Image
     pal = {0: (96, 140, 78), 1: (20, 20, 20), 2: (200, 40, 40), 3: (170, 170, 175), 4: (60, 40, 30)}
-    fs = facings(BICYCLE)
-    im = Image.new("RGB", (SIZE * FACINGS, SIZE))
-    for f, grid in enumerate(fs):
-        for y, row in enumerate(grid):
-            for x, v in enumerate(row):
-                im.putpixel((f * SIZE + x, y), pal[v])
-    im.resize((SIZE * FACINGS * 4, SIZE * 4), Image.NEAREST).save(path)
+    im = Image.new("RGB", (SIZE * FACINGS, SIZE * 2))
+    for r, shapes in enumerate((BICYCLE, MOTORCYCLE)):
+        for f, grid in enumerate(facings(shapes)):
+            for y, row in enumerate(grid):
+                for x, v in enumerate(row):
+                    im.putpixel((f * SIZE + x, r * SIZE + y), pal[v])
+    im.resize((SIZE * FACINGS * 4, SIZE * 8), Image.NEAREST).save(path)
 
 
 if __name__ == "__main__":

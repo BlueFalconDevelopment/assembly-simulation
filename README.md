@@ -279,6 +279,7 @@ In `stage10`, each step is a folder (`main.asm` plus its modules):
 | `11_crews` | Turf crews: each gang posts five crews of three round the city, which guard their corner (and shoot at you). Most houses are now within reach of a gangster. Your guns hit harder, and the shop sells a pistol upgrade |
 | `12_meds` | A health bar and a hits-you-can-take count. Prescription weed heals you: gangsters drop it, and medical marijuana dispensaries (a green cross on the roof) restock it |
 | `13_encounters` | The police patrol the whole street grid (a road network from the map generator) and the dog is walked through town, both more often |
+| `14_bikers` | The Bikers: a clubhouse in town, and a pack of five armored riders on motorcycles who raid a gang's turf now and then, shooting everyone, you included |
 
 [`assembly-project-plan.md`](assembly-project-plan.md) is the working
 plan: the current status, the roadmap for the game, and a list of
